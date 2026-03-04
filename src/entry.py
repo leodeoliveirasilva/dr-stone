@@ -51,6 +51,7 @@ CORS_ALLOWED_ORIGIN_PATTERNS = (
 CORS_ALLOWED_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
 CORS_ALLOWED_HEADERS = ("content-type", "authorization")
 CORS_MAX_AGE_SECONDS = 86400
+RUNNING_STALE_GRACE_SECONDS = 3600
 
 
 def _build_cors_middleware():
@@ -409,17 +410,57 @@ async def _collect_due(env) -> list[dict[str, Any]]:
         if latest_row is None:
             due.append(tracked_product)
             continue
-        if latest_row["status"] == "running":
+        status = str(latest_row.get("status") or "")
+        if status == "running":
+            started_at = _parse_datetime_safe(latest_row.get("started_at"))
+            if started_at is None:
+                _log_event(
+                    "warning",
+                    "collect_due_running_missing_started_at",
+                    tracked_product_id=tracked_product.get("id"),
+                    started_at=latest_row.get("started_at"),
+                )
+                due.append(tracked_product)
+                continue
+            if (now - started_at).total_seconds() <= RUNNING_STALE_GRACE_SECONDS:
+                continue
+            _log_event(
+                "warning",
+                "collect_due_recovering_stale_running_run",
+                tracked_product_id=tracked_product.get("id"),
+                started_at=started_at.isoformat(),
+                stale_grace_seconds=RUNNING_STALE_GRACE_SECONDS,
+            )
+            due.append(tracked_product)
             continue
-        reference = latest_row["finished_at"] or latest_row["started_at"]
-        reference_time = datetime.fromisoformat(reference)
+        reference = latest_row.get("finished_at") or latest_row.get("started_at")
+        reference_time = _parse_datetime_safe(reference)
+        if reference_time is None:
+            _log_event(
+                "warning",
+                "collect_due_invalid_reference_time",
+                tracked_product_id=tracked_product.get("id"),
+                status=status,
+                reference=reference,
+            )
+            due.append(tracked_product)
+            continue
         interval_seconds = 86400 / max(1, int(tracked_product["scrapes_per_day"]))
         if now >= reference_time + timedelta(seconds=interval_seconds):
             due.append(tracked_product)
 
     results: list[dict[str, Any]] = []
     for tracked_product in due:
-        results.append(await _collect_tracked_product(env, tracked_product))
+        try:
+            results.append(await _collect_tracked_product(env, tracked_product))
+        except Exception as exc:
+            _log_event(
+                "error",
+                "collect_due_product_failed",
+                tracked_product_id=tracked_product.get("id"),
+                error_type=type(exc).__name__,
+                error=str(exc),
+            )
     _log_event("info", "collect_due_finished", due_count=len(due), collected_count=len(results))
     return results
 
@@ -897,6 +938,20 @@ def _status_code_from_status_line(status_line: str) -> int:
         return int((status_line or "").split(" ", 1)[0])
     except (TypeError, ValueError):
         return 204
+
+
+def _parse_datetime_safe(value: Any) -> datetime | None:
+    text = _coerce_string(value)
+    if text is None:
+        return None
+    normalized = text.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 async def _platform_fetch(url: str):

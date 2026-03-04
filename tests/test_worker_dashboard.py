@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import entry
@@ -17,6 +18,27 @@ class FakeRequest:
 
     async def json(self):
         return self._payload
+
+
+class _FakeLatestRunStatement:
+    def __init__(self, rows_by_product_id: dict[str, dict | None]):
+        self._rows_by_product_id = rows_by_product_id
+        self._tracked_product_id = ""
+
+    def bind(self, tracked_product_id: str):
+        self._tracked_product_id = str(tracked_product_id)
+        return self
+
+    async def first(self):
+        return self._rows_by_product_id.get(self._tracked_product_id)
+
+
+class _FakeLatestRunDB:
+    def __init__(self, rows_by_product_id: dict[str, dict | None]):
+        self._rows_by_product_id = rows_by_product_id
+
+    def prepare(self, _query: str):
+        return _FakeLatestRunStatement(self._rows_by_product_id)
 
 
 def _make_worker() -> entry.Default:
@@ -179,3 +201,90 @@ def test_get_includes_cors_headers_for_allowed_localhost_origin() -> None:
     assert response.status == 200
     assert response.headers["access-control-allow-origin"] == "http://localhost:5173"
     assert response.headers["vary"] == "Origin"
+
+
+def test_collect_due_retries_stale_running_run(monkeypatch) -> None:
+    started_at = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
+    env = SimpleNamespace(DB=_FakeLatestRunDB({"prod-1": {"status": "running", "started_at": started_at}}))
+
+    async def fake_fetch_all(env, *, include_inactive: bool):
+        assert include_inactive is False
+        return [{"id": "prod-1", "scrapes_per_day": 4}]
+
+    async def fake_collect(env, tracked_product: dict):
+        return {"tracked_product_id": tracked_product["id"]}
+
+    monkeypatch.setattr(entry, "_fetch_all_tracked_products", fake_fetch_all)
+    monkeypatch.setattr(entry, "_collect_tracked_product", fake_collect)
+
+    results = asyncio.run(entry._collect_due(env))
+
+    assert results == [{"tracked_product_id": "prod-1"}]
+
+
+def test_collect_due_skips_fresh_running_run(monkeypatch) -> None:
+    started_at = (datetime.now(UTC) - timedelta(minutes=10)).isoformat()
+    env = SimpleNamespace(DB=_FakeLatestRunDB({"prod-1": {"status": "running", "started_at": started_at}}))
+
+    async def fake_fetch_all(env, *, include_inactive: bool):
+        assert include_inactive is False
+        return [{"id": "prod-1", "scrapes_per_day": 4}]
+
+    async def fake_collect(env, tracked_product: dict):
+        raise AssertionError("fresh running job should not be recollected")
+
+    monkeypatch.setattr(entry, "_fetch_all_tracked_products", fake_fetch_all)
+    monkeypatch.setattr(entry, "_collect_tracked_product", fake_collect)
+
+    results = asyncio.run(entry._collect_due(env))
+
+    assert results == []
+
+
+def test_collect_due_collects_when_latest_timestamp_is_invalid(monkeypatch) -> None:
+    env = SimpleNamespace(DB=_FakeLatestRunDB({"prod-1": {"status": "succeeded", "started_at": "not-a-date"}}))
+
+    async def fake_fetch_all(env, *, include_inactive: bool):
+        assert include_inactive is False
+        return [{"id": "prod-1", "scrapes_per_day": 4}]
+
+    async def fake_collect(env, tracked_product: dict):
+        return {"tracked_product_id": tracked_product["id"]}
+
+    monkeypatch.setattr(entry, "_fetch_all_tracked_products", fake_fetch_all)
+    monkeypatch.setattr(entry, "_collect_tracked_product", fake_collect)
+
+    results = asyncio.run(entry._collect_due(env))
+
+    assert results == [{"tracked_product_id": "prod-1"}]
+
+
+def test_collect_due_continues_after_one_product_failure(monkeypatch) -> None:
+    old_finished = (datetime.now(UTC) - timedelta(hours=7)).isoformat()
+    env = SimpleNamespace(
+        DB=_FakeLatestRunDB(
+            {
+                "prod-1": {"status": "succeeded", "started_at": old_finished, "finished_at": old_finished},
+                "prod-2": {"status": "succeeded", "started_at": old_finished, "finished_at": old_finished},
+            }
+        )
+    )
+
+    async def fake_fetch_all(env, *, include_inactive: bool):
+        assert include_inactive is False
+        return [
+            {"id": "prod-1", "scrapes_per_day": 4},
+            {"id": "prod-2", "scrapes_per_day": 4},
+        ]
+
+    async def fake_collect(env, tracked_product: dict):
+        if tracked_product["id"] == "prod-1":
+            raise RuntimeError("kabum unavailable")
+        return {"tracked_product_id": tracked_product["id"]}
+
+    monkeypatch.setattr(entry, "_fetch_all_tracked_products", fake_fetch_all)
+    monkeypatch.setattr(entry, "_collect_tracked_product", fake_collect)
+
+    results = asyncio.run(entry._collect_due(env))
+
+    assert results == [{"tracked_product_id": "prod-2"}]
