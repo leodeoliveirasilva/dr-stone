@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import traceback
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
@@ -39,6 +40,7 @@ class Default(WorkerEntrypoint):
         url = urlparse(str(request.url))
         path = url.path.rstrip("/") or "/"
         query = _parse_query_string(url.query)
+        _log_event("info", "request_received", method=method, path=path, query=query)
 
         try:
             if path == "/" and method == "GET":
@@ -63,12 +65,19 @@ class Default(WorkerEntrypoint):
                     return _json_response(created, status=201)
 
             if path == "/collect-due" and method == "POST":
+                _log_event("info", "collect_due_requested", path=path)
                 results = await _collect_due(self.env)
                 return _json_response(results)
 
             if path.startswith("/tracked-products/"):
                 parts = [part for part in path.split("/") if part]
                 if len(parts) == 2 and method == "POST" and query.get("action") == "collect":
+                    _log_event(
+                        "info",
+                        "manual_collect_requested",
+                        tracked_product_id=parts[1],
+                        path=path,
+                    )
                     result = await _collect_one(self.env, parts[1])
                     return _json_response(result)
                 if len(parts) == 2 and method == "GET":
@@ -91,8 +100,15 @@ class Default(WorkerEntrypoint):
             return _json_response({"error": str(exc)}, status=404)
         except ValueError as exc:
             return _json_response({"error": str(exc)}, status=400)
-        except Exception:
-            return _json_response({"error": "Internal server error"}, status=500)
+        except Exception as exc:
+            _log_worker_exception(exc, method=method, path=path)
+            return _json_response(
+                {
+                    "error": str(exc) or "Internal server error",
+                    "error_type": type(exc).__name__,
+                },
+                status=500,
+            )
 
         return _json_response({"error": "Not found"}, status=404)
 
@@ -326,6 +342,7 @@ async def _collect_due(env) -> list[dict[str, Any]]:
     now = datetime.now(UTC)
     tracked_products = await _fetch_all_tracked_products(env, include_inactive=False)
     due: list[dict[str, Any]] = []
+    _log_event("info", "collect_due_started", tracked_product_count=len(tracked_products), now=now.isoformat())
 
     for tracked_product in tracked_products:
         latest = await env.DB.prepare(
@@ -352,6 +369,7 @@ async def _collect_due(env) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
     for tracked_product in due:
         results.append(await _collect_tracked_product(env, tracked_product))
+    _log_event("info", "collect_due_finished", due_count=len(due), collected_count=len(results))
     return results
 
 
@@ -366,6 +384,13 @@ async def _collect_one(env, tracked_product_id: str) -> dict[str, Any]:
     tracked_product_row = _js_to_py(tracked_product)
     if tracked_product_row is None:
         raise LookupError(f"Tracked product not found: {tracked_product_id}")
+    _log_event(
+        "info",
+        "manual_collect_loaded_product",
+        tracked_product_id=tracked_product_id,
+        search_term=tracked_product_row.get("search_term"),
+        source_name=tracked_product_row.get("source_name"),
+    )
     return await _collect_tracked_product(env, tracked_product_row)
 
 
@@ -373,6 +398,15 @@ async def _collect_tracked_product(env, tracked_product: dict[str, Any]) -> dict
     search_url = _build_kabum_search_url(str(tracked_product["search_term"]))
     search_run_id = _new_id()
     started_at = _utc_now()
+    _log_event(
+        "info",
+        "collect_run_started",
+        tracked_product_id=tracked_product["id"],
+        search_run_id=search_run_id,
+        search_term=tracked_product["search_term"],
+        product_title=tracked_product["product_title"],
+        search_url=search_url,
+    )
 
     await env.DB.prepare(
         """
@@ -407,6 +441,17 @@ async def _collect_tracked_product(env, tracked_product: dict[str, Any]) -> dict
         ]
         matched_items.sort(key=lambda item: (Decimal(str(item["price"])), item["position"], item["title"]))
         selected_items = matched_items[:MAX_RESULTS_PER_RUN]
+        _log_event(
+            "info",
+            "collect_run_matched_items",
+            search_run_id=search_run_id,
+            tracked_product_id=tracked_product["id"],
+            total_results=int(run["total_results"]),
+            scraped_items=len(run["items"]),
+            matched_items=len(matched_items),
+            selected_items=len(selected_items),
+            page_count=int(run["page_count"]),
+        )
 
         for item in selected_items:
             await env.DB.prepare(
@@ -458,6 +503,15 @@ async def _collect_tracked_product(env, tracked_product: dict[str, Any]) -> dict
             page_count=int(run["page_count"]),
             message="lowest_prices_saved",
         )
+        _log_event(
+            "info",
+            "collect_run_succeeded",
+            tracked_product_id=tracked_product["id"],
+            search_run_id=search_run_id,
+            total_results=int(run["total_results"]),
+            matched_results=len(selected_items),
+            page_count=int(run["page_count"]),
+        )
         return {
             "tracked_product_id": tracked_product["id"],
             "search_run_id": search_run_id,
@@ -466,6 +520,15 @@ async def _collect_tracked_product(env, tracked_product: dict[str, Any]) -> dict
             "page_count": int(run["page_count"]),
         }
     except Exception as exc:
+        _log_event(
+            "error",
+            "collect_run_failed",
+            tracked_product_id=tracked_product["id"],
+            search_run_id=search_run_id,
+            search_term=tracked_product["search_term"],
+            error_type=type(exc).__name__,
+            error=str(exc),
+        )
         await env.DB.prepare(
             """
             INSERT INTO scrape_failures (
@@ -557,6 +620,7 @@ async def _finish_search_run(
 
 async def _scrape_kabum_search(search_term: str) -> dict[str, Any]:
     first_url = _build_kabum_search_url(search_term)
+    _log_event("info", "kabum_search_started", search_term=search_term, first_url=first_url)
     first_page = await _scrape_kabum_search_page(first_url)
     items = list(first_page["items"])
 
@@ -565,6 +629,15 @@ async def _scrape_kabum_search(search_term: str) -> dict[str, Any]:
         page = await _scrape_kabum_search_page(page_url)
         items.extend(page["items"])
 
+    _log_event(
+        "info",
+        "kabum_search_finished",
+        search_term=search_term,
+        resolved_url=first_page["resolved_url"],
+        total_results=int(first_page["total_results"]),
+        page_count=int(first_page["page_count"]),
+        item_count=len(items),
+    )
     return {
         "search_term": search_term,
         "resolved_url": first_page["resolved_url"],
@@ -576,7 +649,9 @@ async def _scrape_kabum_search(search_term: str) -> dict[str, Any]:
 
 
 async def _scrape_kabum_search_page(url: str) -> dict[str, Any]:
+    _log_event("info", "kabum_search_page_fetch_started", url=url)
     response = await fetch(url)
+    _log_event("info", "kabum_search_page_fetch_finished", url=url, status=response.status)
     if response.status != 200:
         raise ValueError(f"KaBuM search request failed with status {response.status}")
     html = await response.text()
@@ -641,6 +716,15 @@ async def _scrape_kabum_search_page(url: str) -> dict[str, Any]:
             }
         )
 
+    _log_event(
+        "info",
+        "kabum_search_page_parsed",
+        url=url,
+        resolved_url=resolved_url,
+        total_results=total_results,
+        page_count=page_count,
+        item_count=len(items),
+    )
     return {
         "resolved_url": resolved_url,
         "total_results": total_results,
@@ -660,6 +744,32 @@ def _json_response(payload: Any, *, status: int = 200) -> Response:
 
 def _html_response(payload: str, *, status: int = 200) -> Response:
     return Response(payload, headers={"content-type": "text/html; charset=utf-8"}, status=status)
+
+
+def _log_event(level: str, message: str, **fields: Any) -> None:
+    print(
+        json.dumps(
+            {
+                "level": level,
+                "message": message,
+                **fields,
+            },
+            ensure_ascii=True,
+            default=str,
+        )
+    )
+
+
+def _log_worker_exception(exc: Exception, *, method: str, path: str) -> None:
+    _log_event(
+        "error",
+        "worker_request_failed",
+        method=method,
+        path=path,
+        error_type=type(exc).__name__,
+        error=str(exc),
+        traceback=traceback.format_exc(),
+    )
 
 
 def _parse_query_string(query: str) -> dict[str, str]:

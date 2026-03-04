@@ -88,6 +88,27 @@ def test_put_tracked_product_updates_record(monkeypatch) -> None:
     assert payload == {"id": "prod-1", "product_title": "RTX 5080"}
 
 
+def test_collect_route_surfaces_runtime_error(monkeypatch) -> None:
+    worker = _make_worker()
+
+    async def fake_collect(env, tracked_product_id: str):
+        assert tracked_product_id == "prod-1"
+        raise RuntimeError("KaBuM search request failed with status 403")
+
+    monkeypatch.setattr(entry, "_collect_one", fake_collect)
+
+    response = asyncio.run(
+        worker.fetch(FakeRequest("POST", "https://example.com/tracked-products/prod-1?action=collect"))
+    )
+
+    assert response.status == 500
+    payload = json.loads(asyncio.run(response.text()))
+    assert payload == {
+        "error": "KaBuM search request failed with status 403",
+        "error_type": "RuntimeError",
+    }
+
+
 def test_render_dashboard_html_contains_key_sections() -> None:
     html = render_dashboard_html()
 
