@@ -1,4 +1,3 @@
-from dr_stone.scrapers.base import BaseScraper
-from dr_stone.scrapers.kabum import KabumScraper
+from dr_stone.scrapers.kabum_search import KabumSearchScraper
 
-__all__ = ["BaseScraper", "KabumScraper"]
+__all__ = ["KabumSearchScraper"]

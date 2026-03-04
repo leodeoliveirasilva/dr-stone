@@ -39,6 +39,16 @@ def parse_json(text: str) -> Any | None:
         return None
 
 
+def coerce_json_object(value: Any) -> dict[str, Any] | None:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        payload = parse_json(value)
+        if isinstance(payload, dict):
+            return payload
+    return None
+
+
 def extract_product_json_ld(soup: BeautifulSoup) -> dict[str, Any] | None:
     for node in soup.select('script[type="application/ld+json"]'):
         payload = parse_json(node.get_text(strip=True))

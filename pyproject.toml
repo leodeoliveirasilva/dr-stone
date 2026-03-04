@@ -17,10 +17,11 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "pytest>=8.3,<9",
+  "pytest-cov>=6.0,<7",
 ]
 
 [project.scripts]
-dr-stone-scrape = "dr_stone.cli:main"
+dr-stone-search = "dr_stone.search_cli:main"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

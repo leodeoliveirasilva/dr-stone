@@ -1,0 +1,405 @@
+from __future__ import annotations
+
+import json
+import logging
+import sqlite3
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
+from pathlib import Path
+from uuid import uuid4
+
+from dr_stone.models import (
+    ScrapeFailure,
+    SearchHistoryEntry,
+    SearchResultItem,
+    TrackedProduct,
+)
+
+
+class SQLiteStorage:
+    def __init__(self, database_path: str | Path, logger: logging.Logger) -> None:
+        self.database_path = Path(database_path)
+        self.logger = logger
+
+    def connect(self) -> sqlite3.Connection:
+        self.database_path.parent.mkdir(parents=True, exist_ok=True)
+        connection = sqlite3.connect(self.database_path)
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
+        return connection
+
+    def apply_migrations(self, migrations_dir: str | Path) -> list[str]:
+        migrations_path = Path(migrations_dir)
+        applied_now: list[str] = []
+
+        with self.connect() as connection:
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS schema_migrations (
+                    filename TEXT PRIMARY KEY,
+                    applied_at TEXT NOT NULL
+                )
+                """
+            )
+            applied = {
+                row["filename"]
+                for row in connection.execute("SELECT filename FROM schema_migrations")
+            }
+
+            for migration in sorted(migrations_path.glob("*.sql")):
+                if migration.name in applied:
+                    continue
+                connection.executescript(migration.read_text(encoding="utf-8"))
+                connection.execute(
+                    "INSERT INTO schema_migrations (filename, applied_at) VALUES (?, ?)",
+                    (migration.name, _utc_now()),
+                )
+                applied_now.append(migration.name)
+
+        if applied_now:
+            self.logger.info(
+                "db_migrations_applied",
+                extra={"event_data": {"database_path": str(self.database_path), "migrations": applied_now}},
+            )
+        return applied_now
+
+    def create_tracked_product(
+        self,
+        *,
+        product_title: str,
+        search_term: str,
+        source: str = "kabum",
+        scrapes_per_day: int = 4,
+        active: bool = True,
+    ) -> TrackedProduct:
+        tracked_product_id = _new_id()
+        timestamp = _utc_now()
+        with self.connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO tracked_products (
+                    id,
+                    source_name,
+                    product_title,
+                    search_term,
+                    scrapes_per_day,
+                    active,
+                    created_at,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    tracked_product_id,
+                    source,
+                    product_title,
+                    search_term,
+                    scrapes_per_day,
+                    int(active),
+                    timestamp,
+                    timestamp,
+                ),
+            )
+        tracked_product = self.get_tracked_product(tracked_product_id)
+        assert tracked_product is not None
+        return tracked_product
+
+    def list_tracked_products(
+        self,
+        *,
+        active_only: bool = True,
+        source: str | None = None,
+    ) -> list[TrackedProduct]:
+        query = "SELECT * FROM tracked_products WHERE 1 = 1"
+        params: list[object] = []
+        if active_only:
+            query += " AND active = 1"
+        if source:
+            query += " AND source_name = ?"
+            params.append(source)
+        query += " ORDER BY created_at ASC"
+
+        with self.connect() as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [self._row_to_tracked_product(row) for row in rows]
+
+    def list_due_tracked_products(
+        self,
+        *,
+        now: datetime | None = None,
+        source: str | None = None,
+    ) -> list[TrackedProduct]:
+        current_time = now or datetime.now(UTC)
+        tracked_products = self.list_tracked_products(active_only=True, source=source)
+        due_products: list[TrackedProduct] = []
+
+        with self.connect() as connection:
+            for tracked_product in tracked_products:
+                latest_run = connection.execute(
+                    """
+                    SELECT status, started_at, finished_at
+                    FROM search_runs
+                    WHERE tracked_product_id = ?
+                    ORDER BY started_at DESC
+                    LIMIT 1
+                    """,
+                    (tracked_product.id,),
+                ).fetchone()
+
+                if latest_run is None:
+                    due_products.append(tracked_product)
+                    continue
+
+                if latest_run["status"] == "running":
+                    continue
+
+                reference_value = latest_run["finished_at"] or latest_run["started_at"]
+                reference_time = datetime.fromisoformat(str(reference_value))
+                interval_seconds = 86400 / max(1, tracked_product.scrapes_per_day)
+                if current_time >= reference_time + timedelta(seconds=interval_seconds):
+                    due_products.append(tracked_product)
+
+        return due_products
+
+    def get_tracked_product(self, tracked_product_id: str) -> TrackedProduct | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM tracked_products WHERE id = ?",
+                (tracked_product_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_tracked_product(row)
+
+    def create_search_run(self, tracked_product: TrackedProduct, search_url: str) -> str:
+        search_run_id = _new_id()
+        timestamp = _utc_now()
+        with self.connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO search_runs (
+                    id,
+                    tracked_product_id,
+                    source_name,
+                    search_term,
+                    search_url,
+                    status,
+                    started_at,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    search_run_id,
+                    tracked_product.id,
+                    tracked_product.source,
+                    tracked_product.search_term,
+                    search_url,
+                    "running",
+                    timestamp,
+                    timestamp,
+                ),
+            )
+        return search_run_id
+
+    def finish_search_run(
+        self,
+        search_run_id: str,
+        *,
+        status: str,
+        total_results: int | None = None,
+        matched_results: int | None = None,
+        page_count: int | None = None,
+        message: str | None = None,
+    ) -> None:
+        finished_at = datetime.now(UTC)
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT started_at FROM search_runs WHERE id = ?",
+                (search_run_id,),
+            ).fetchone()
+            duration_ms = None
+            if row:
+                started_at = datetime.fromisoformat(str(row["started_at"]))
+                duration_ms = int((finished_at - started_at).total_seconds() * 1000)
+            connection.execute(
+                """
+                UPDATE search_runs
+                SET status = ?,
+                    finished_at = ?,
+                    duration_ms = ?,
+                    total_results = ?,
+                    matched_results = ?,
+                    page_count = ?,
+                    message = ?
+                WHERE id = ?
+                """,
+                (
+                    status,
+                    finished_at.isoformat(),
+                    duration_ms,
+                    total_results,
+                    matched_results,
+                    page_count,
+                    message,
+                    search_run_id,
+                ),
+            )
+
+    def persist_search_run_items(
+        self,
+        *,
+        search_run_id: str,
+        tracked_product_id: str,
+        items: list[SearchResultItem],
+        captured_at: datetime,
+    ) -> int:
+        with self.connect() as connection:
+            for item in items:
+                connection.execute(
+                    """
+                    INSERT INTO search_run_items (
+                        id,
+                        search_run_id,
+                        tracked_product_id,
+                        source_name,
+                        product_title,
+                        canonical_url,
+                        source_product_key,
+                        seller_name,
+                        price_value,
+                        currency,
+                        availability,
+                        is_available,
+                        position,
+                        captured_at,
+                        metadata_json,
+                        created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        _new_id(),
+                        search_run_id,
+                        tracked_product_id,
+                        item.source,
+                        item.title,
+                        item.canonical_url,
+                        _coerce_text(item.metadata.get("source_product_key")),
+                        _coerce_text(item.metadata.get("seller_name")),
+                        str(item.price),
+                        item.currency,
+                        item.availability,
+                        int(item.is_available),
+                        item.position,
+                        captured_at.isoformat(),
+                        json.dumps(item.metadata, ensure_ascii=True, sort_keys=True),
+                        _utc_now(),
+                    ),
+                )
+        return len(items)
+
+    def list_price_history(
+        self,
+        tracked_product_id: str,
+        *,
+        limit: int = 100,
+    ) -> list[SearchHistoryEntry]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT
+                    captured_at,
+                    product_title,
+                    canonical_url,
+                    price_value,
+                    currency,
+                    seller_name,
+                    search_run_id
+                FROM search_run_items
+                WHERE tracked_product_id = ?
+                ORDER BY captured_at DESC, CAST(price_value AS REAL) ASC
+                LIMIT ?
+                """,
+                (tracked_product_id, limit),
+            ).fetchall()
+        return [self._row_to_history_entry(row) for row in rows]
+
+    def record_failure(
+        self,
+        failure: ScrapeFailure,
+        *,
+        search_run_id: str | None = None,
+    ) -> str:
+        failure_id = _new_id()
+        with self.connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO scrape_failures (
+                    id,
+                    search_run_id,
+                    source_name,
+                    stage,
+                    error_code,
+                    error_type,
+                    message,
+                    retriable,
+                    http_status,
+                    target_url,
+                    final_url,
+                    details_json,
+                    captured_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    failure_id,
+                    search_run_id,
+                    failure.source,
+                    failure.stage,
+                    failure.error_code,
+                    failure.error_type,
+                    failure.message,
+                    int(failure.retriable),
+                    failure.http_status,
+                    failure.target_url,
+                    failure.final_url,
+                    json.dumps(failure.details, ensure_ascii=True, sort_keys=True),
+                    failure.captured_at.isoformat(),
+                ),
+            )
+        return failure_id
+
+    def _row_to_tracked_product(self, row: sqlite3.Row) -> TrackedProduct:
+        return TrackedProduct(
+            id=str(row["id"]),
+            source=str(row["source_name"]),
+            product_title=str(row["product_title"]),
+            search_term=str(row["search_term"]),
+            scrapes_per_day=int(row["scrapes_per_day"]),
+            active=bool(row["active"]),
+            created_at=datetime.fromisoformat(str(row["created_at"])),
+            updated_at=datetime.fromisoformat(str(row["updated_at"])),
+        )
+
+    def _row_to_history_entry(self, row: sqlite3.Row) -> SearchHistoryEntry:
+        return SearchHistoryEntry(
+            captured_at=datetime.fromisoformat(str(row["captured_at"])),
+            product_title=str(row["product_title"]),
+            canonical_url=str(row["canonical_url"]),
+            price=Decimal(str(row["price_value"])),
+            currency=str(row["currency"]),
+            seller_name=_coerce_text(row["seller_name"]),
+            search_run_id=str(row["search_run_id"]),
+        )
+
+
+def _new_id() -> str:
+    return uuid4().hex
+
+
+def _utc_now() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def _coerce_text(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None

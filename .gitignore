@@ -21,6 +21,10 @@ htmlcov/
 build/
 dist/
 *.egg-info/
+*.db
+*.sqlite
+*.sqlite3
+.data/
 
 # Frontend and Node artifacts
 node_modules/

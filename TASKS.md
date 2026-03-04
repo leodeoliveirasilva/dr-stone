@@ -14,7 +14,7 @@ Priority order for the MVP:
 
 Goal: get one scraper working locally before adding platform complexity.
 
-- [x] Create the Python project structure (`src/`, `tests/`, `scripts/`, `fixtures/`)
+- [x] Create the Python project structure (`src/`, `tests/`, `migrations/`, `docs/`)
 - [x] Set up Python `3.12+` tooling and dependency management
 - [x] Add base dependencies for HTTP-first scraping (`httpx`, parser library, test tools)
 - [x] Define environment/config loading for timeouts, user agent, retries, and log level
@@ -32,11 +32,11 @@ Definition of done:
 
 ## Milestone 2: First Store Adapter
 
-Goal: support one real source end to end with HTTP-first extraction.
+Goal: support one real source end to end with HTTP-first search extraction.
 
 - [x] Choose the first target store and document its product page structure
 - [x] Capture one or more sample HTML fixtures for parser development
-- [x] Implement the first source adapter with selectors for title, price, currency, URL, and availability
+- [x] Implement the first source adapter with search-result extraction for title, price, currency, URL, and availability
 - [x] Add parser validation rules so empty or invalid values fail clearly
 - [x] Store raw extraction context useful for debugging
 - [x] Create a CLI or script entrypoint to run the adapter against a URL
@@ -53,11 +53,11 @@ Goal: make the first scraper safe to extend.
 
 - [x] Add unit tests for price normalization
 - [x] Add fixture-based parser tests for the first adapter
-- [ ] Add HTTP error handling for redirects, `4xx`, `5xx`, and empty bodies
-- [ ] Add anti-block basics: realistic headers, pacing, and explicit retry limits
-- [ ] Define when browser rendering is allowed instead of plain HTTP
-- [ ] Add a failure record format for fetch errors, parse errors, and validation errors
-- [ ] Document assumptions and limitations for the first store
+- [x] Add HTTP error handling for redirects, `4xx`, `5xx`, and empty bodies
+- [x] Add anti-block basics: realistic headers, pacing, and explicit retry limits
+- [x] Define when browser rendering is allowed instead of plain HTTP
+- [x] Add a failure record format for fetch errors, parse errors, and validation errors
+- [x] Document assumptions and limitations for the first store
 
 Definition of done:
 
@@ -66,38 +66,39 @@ Definition of done:
 
 ## Milestone 4: Database and History Storage
 
-Goal: persist product metadata and historical snapshots.
+Goal: persist tracked searches, query runs, and lowest-price history.
 
-- [ ] Define the initial schema for `products`
-- [ ] Define the initial schema for `product_sources`
-- [ ] Define the initial schema for `price_snapshots`
-- [ ] Define the initial schema for `scrape_jobs`
-- [ ] Define the initial schema for `scrape_failures`
-- [ ] Create the first D1 migration files
-- [ ] Define append-only rules for historical snapshots
-- [ ] Implement the write flow from scraper result to `price_snapshots`
-- [ ] Prevent duplicate snapshots when nothing changed
-- [ ] Store timestamps consistently in UTC
+- [x] Define the initial schema for `tracked_products`
+- [x] Define the initial schema for `search_runs`
+- [x] Define the initial schema for `search_run_items`
+- [x] Define the initial schema for `scrape_failures`
+- [x] Create the first D1 migration files
+- [x] Define append-only rules for historical search results
+- [x] Implement the write flow from a search run to persisted lowest prices
+- [x] Persist only the 4 minimum matching prices from each run
+- [x] Store timestamps consistently in UTC
 
 Definition of done:
 
-- a successful scrape creates or updates product/source records
-- price history is saved as normalized snapshots
+- a successful search run creates tracked history rows
+- lowest-price history is saved for each scheduled run
 
 ## Milestone 5: End-to-End Scraping Pipeline
 
 Goal: connect scraping and persistence in one runnable workflow.
 
-- [ ] Create an application service that loads a tracked product source and runs the correct adapter
+- [ ] Create an application service that loads tracked search terms and runs the correct source adapter
 - [ ] Persist successful scrapes and failed scrapes through one pipeline
 - [ ] Record scrape start, finish, duration, and status in `scrape_jobs`
-- [ ] Add an idempotent command to scrape one tracked product
-- [ ] Add an idempotent command to scrape all tracked products
+- [ ] Add an idempotent command to scrape one tracked search
+- [ ] Add an idempotent command to scrape all tracked searches
+- [ ] Match results using the stored product title without considering case
+- [ ] Persist only the 4 minimum prices from each search run
 - [ ] Validate that one full run produces job records, snapshots, and failures correctly
 
 Definition of done:
 
-- one command runs the full scrape pipeline for tracked products
+- one command runs the full scrape pipeline for tracked searches
 - each run leaves a complete audit trail in the database
 
 ## Milestone 6: Backend Service
@@ -121,7 +122,8 @@ Definition of done:
 
 Goal: run collection without manual commands.
 
-- [ ] Define scrape frequency rules by product or source
+- [ ] Define scrape frequency rules by tracked search term
+- [ ] Run each tracked search 4 times per day by default
 - [ ] Add Cron Trigger support for scheduled scraping
 - [ ] Prevent overlapping or duplicate scheduled runs
 - [ ] Retry transient failures with explicit limits

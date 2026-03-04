@@ -6,26 +6,39 @@ The current implementation covers the first scraping foundation:
 
 - Python 3.12 package structure
 - HTTP-first fetcher with retries and configurable headers
+- configurable pacing, explicit empty-body handling, and structured scrape failures
 - normalization helpers for price, currency, and availability
 - structured JSON logging
-- a first `kabum.com.br` scraper that reads server-rendered data
-- fixture-based pytest coverage for the KaBuM parser
+- a KaBuM search collector for tracked search terms
+- case-insensitive matching between the tracked product title and the scraped result title
+- persistence of only the 4 lowest matching prices for each search run
+- due-run selection based on `scrapes_per_day`, with `4` runs per day as the default
+- D1-compatible SQLite migrations and persistence for tracked searches, runs, matched items, and failures
+
+The tracked search flow works like this:
+
+- store a product title and a search term in the database
+- scrape KaBuM search results for that term
+- keep only results whose title contains the stored product title, ignoring case
+- persist only the 4 cheapest matching results for each run
+- schedule each tracked search to run 4 times per day
 
 ## Current KaBuM Strategy
 
-The first scraper is built around HTML that KaBuM already returns on the initial request:
+The search collector is HTTP-first and reads server-rendered listing data:
 
-- parse `application/ld+json` product data first
-- fall back to `__NEXT_DATA__` when needed
-- avoid browser rendering unless HTTP-first extraction stops being reliable
+- fetch the KaBuM search/listing page with regular HTTP
+- parse the embedded `__NEXT_DATA__` payload
+- iterate listing pages when the result set spans multiple pages
+- avoid browser rendering unless KaBuM stops returning usable listing JSON
 
 ## Project Layout
 
 - `src/dr_stone/`: scraping package
 - `src/dr_stone/scrapers/`: source adapters
+- `migrations/`: D1-compatible schema files
+- `docs/sources/`: source-specific scraping assumptions
 - `tests/`: pytest suite
-- `fixtures/`: HTML fixtures for parser development
-- `scripts/`: small entrypoints for local execution
 
 ## Quick Start
 
@@ -41,10 +54,40 @@ Run tests:
 PYTHONPATH=src:.deps python3 -m pytest
 ```
 
-Run the KaBuM scraper:
+Run tests with Docker Compose:
 
 ```bash
-PYTHONPATH=src:.deps python3 -m dr_stone.cli "https://www.kabum.com.br/produto/210818/placa-de-video-palit-nvidia-geforce-rtx-3080-gamingpro-10gb-gddr6x-ned3080019ia-132aa"
+docker compose run --rm tests
+```
+
+Add a tracked search:
+
+```bash
+PYTHONPATH=src:.deps python3 -m dr_stone.search_cli add --db-path .data/dr_stone.sqlite3 --title "RX 9070 XT" --search-term "RX 9070 XT"
+```
+
+Collect tracked searches:
+
+```bash
+PYTHONPATH=src:.deps python3 -m dr_stone.search_cli collect --db-path .data/dr_stone.sqlite3
+```
+
+Collect only searches that are due now:
+
+```bash
+PYTHONPATH=src:.deps python3 -m dr_stone.search_cli collect-due --db-path .data/dr_stone.sqlite3
+```
+
+List tracked searches:
+
+```bash
+PYTHONPATH=src:.deps python3 -m dr_stone.search_cli list --db-path .data/dr_stone.sqlite3
+```
+
+Show price history for one tracked search:
+
+```bash
+PYTHONPATH=src:.deps python3 -m dr_stone.search_cli history --db-path .data/dr_stone.sqlite3 --tracked-product-id YOUR_TRACKED_PRODUCT_ID
 ```
 
 Environment variables are documented in `.env.example`.
