@@ -9,10 +9,11 @@ import pytest
 
 
 class FakeRequest:
-    def __init__(self, method: str, url: str, payload: dict | None = None):
+    def __init__(self, method: str, url: str, payload: dict | None = None, headers: dict[str, str] | None = None):
         self.method = method
         self.url = url
         self._payload = payload
+        self.headers = headers or {}
 
     async def json(self):
         return self._payload
@@ -115,3 +116,66 @@ def test_bind_params_keeps_none_locally() -> None:
 def test_platform_fetch_raises_clear_error_without_worker_runtime() -> None:
     with pytest.raises(RuntimeError, match="Cloudflare fetch API is unavailable in this runtime"):
         asyncio.run(entry._platform_fetch("https://example.com"))
+
+
+def test_preflight_allows_frontend_origin() -> None:
+    worker = _make_worker()
+
+    response = asyncio.run(
+        worker.fetch(
+            FakeRequest(
+                "OPTIONS",
+                "https://example.com/tracked-products",
+                headers={
+                    "origin": "https://drstone.leogendaryo.com",
+                    "access-control-request-method": "POST",
+                    "access-control-request-headers": "content-type",
+                },
+            )
+        )
+    )
+
+    assert response.status == 204
+    assert response.headers["access-control-allow-origin"] == "https://drstone.leogendaryo.com"
+    assert "POST" in response.headers["access-control-allow-methods"]
+    assert "content-type" in response.headers["access-control-allow-headers"]
+    assert response.headers["access-control-max-age"] == "86400"
+
+
+def test_preflight_rejects_unlisted_origin() -> None:
+    worker = _make_worker()
+
+    response = asyncio.run(
+        worker.fetch(
+            FakeRequest(
+                "OPTIONS",
+                "https://example.com/tracked-products",
+                headers={
+                    "origin": "https://evil.example",
+                    "access-control-request-method": "POST",
+                    "access-control-request-headers": "content-type",
+                },
+            )
+        )
+    )
+
+    assert response.status == 204
+    assert "access-control-allow-origin" not in response.headers
+
+
+def test_get_includes_cors_headers_for_allowed_localhost_origin() -> None:
+    worker = _make_worker()
+
+    response = asyncio.run(
+        worker.fetch(
+            FakeRequest(
+                "GET",
+                "https://example.com/",
+                headers={"origin": "http://localhost:5173"},
+            )
+        )
+    )
+
+    assert response.status == 200
+    assert response.headers["access-control-allow-origin"] == "http://localhost:5173"
+    assert response.headers["vary"] == "Origin"

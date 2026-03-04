@@ -9,6 +9,11 @@ from typing import Any
 from urllib.parse import quote, urlparse
 
 try:
+    from wsgicors import CORS as WsgiCors
+except ImportError:  # pragma: no cover - dependency is expected in deployed/runtime environments
+    WsgiCors = None
+
+try:
     from workers import Response, WorkerEntrypoint
 except ImportError:  # pragma: no cover - local test fallback
     class Response:
@@ -31,6 +36,36 @@ UTC = timezone.utc
 KABUM_BASE_URL = "https://www.kabum.com.br"
 DEFAULT_SCRAPES_PER_DAY = 4
 MAX_RESULTS_PER_RUN = 4
+CORS_ALLOWED_ORIGIN_PATTERNS = (
+    "https://drstone.leogendaryo.com",
+    "http://drstone.leogendaryo.com",
+    "https://localhost",
+    "http://localhost",
+    "https://localhost:*",
+    "http://localhost:*",
+    "https://127.0.0.1",
+    "http://127.0.0.1",
+    "https://127.0.0.1:*",
+    "http://127.0.0.1:*",
+)
+CORS_ALLOWED_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
+CORS_ALLOWED_HEADERS = ("content-type", "authorization")
+CORS_MAX_AGE_SECONDS = 86400
+
+
+def _build_cors_middleware():
+    if WsgiCors is None:
+        return None
+    return WsgiCors(
+        lambda _environ, _start_response: [],
+        origin=" ".join(CORS_ALLOWED_ORIGIN_PATTERNS),
+        methods=",".join(CORS_ALLOWED_METHODS),
+        headers=",".join(CORS_ALLOWED_HEADERS),
+        maxage=str(CORS_MAX_AGE_SECONDS),
+    )
+
+
+_CORS_MIDDLEWARE = _build_cors_middleware()
 
 
 class Default(WorkerEntrypoint):
@@ -38,8 +73,18 @@ class Default(WorkerEntrypoint):
         method = str(request.method).upper()
         url = urlparse(str(request.url))
         path = url.path.rstrip("/") or "/"
+        origin = _request_header(request, "origin")
         query = _parse_query_string(url.query)
         _log_event("info", "request_received", method=method, path=path, query=query)
+
+        preflight = _cors_preflight_response(
+            origin=origin,
+            access_control_request_method=_request_header(request, "access-control-request-method"),
+            access_control_request_headers=_request_header(request, "access-control-request-headers"),
+        )
+        if preflight is not None:
+            return preflight
+        cors_headers = _cors_headers_for_response(origin=origin, request_method=method)
 
         try:
             if path == "/" and method == "GET":
@@ -47,31 +92,32 @@ class Default(WorkerEntrypoint):
                     {
                         "name": "dr-stone-api",
                         "status": "ok",
-                    }
+                    },
+                    headers=cors_headers,
                 )
 
             if path == "/health" and method == "GET":
-                return _json_response({"status": "ok"})
+                return _json_response({"status": "ok"}, headers=cors_headers)
 
             if path == "/search-runs" and method == "GET":
                 date = _normalize_date(query.get("date"))
                 limit = _parse_positive_int(query.get("limit"), "limit", default=40, maximum=200)
                 rows = await _fetch_search_runs(self.env, date=date, limit=limit)
-                return _json_response({"date": date, "runs": rows})
+                return _json_response({"date": date, "runs": rows}, headers=cors_headers)
 
             if path == "/tracked-products":
                 if method == "GET":
                     rows = await _fetch_all_tracked_products(self.env, include_inactive=query.get("all") == "1")
-                    return _json_response(rows)
+                    return _json_response(rows, headers=cors_headers)
                 if method == "POST":
                     payload = await request.json()
                     created = await _create_tracked_product(self.env, payload)
-                    return _json_response(created, status=201)
+                    return _json_response(created, status=201, headers=cors_headers)
 
             if path == "/collect-due" and method == "POST":
                 _log_event("info", "collect_due_requested", path=path)
                 results = await _collect_due(self.env)
-                return _json_response(results)
+                return _json_response(results, headers=cors_headers)
 
             if path.startswith("/tracked-products/"):
                 parts = [part for part in path.split("/") if part]
@@ -83,27 +129,27 @@ class Default(WorkerEntrypoint):
                         path=path,
                     )
                     result = await _collect_one(self.env, parts[1])
-                    return _json_response(result)
+                    return _json_response(result, headers=cors_headers)
                 if len(parts) == 2 and method == "GET":
                     product = await _get_tracked_product(self.env, parts[1])
                     if product is None:
                         raise LookupError(f"Tracked product not found: {parts[1]}")
-                    return _json_response(product)
+                    return _json_response(product, headers=cors_headers)
                 if len(parts) == 2 and method in {"PUT", "PATCH"}:
                     payload = await request.json()
                     updated = await _update_tracked_product(self.env, parts[1], payload)
-                    return _json_response(updated)
+                    return _json_response(updated, headers=cors_headers)
                 if len(parts) == 2 and method == "DELETE":
                     await _delete_tracked_product(self.env, parts[1])
-                    return Response("", status=204)
+                    return Response("", headers=cors_headers or None, status=204)
                 if len(parts) == 3 and parts[2] == "history" and method == "GET":
                     limit = _parse_positive_int(query.get("limit"), "limit", default=100, maximum=500)
                     history = await _history(self.env, parts[1], limit)
-                    return _json_response(history)
+                    return _json_response(history, headers=cors_headers)
         except LookupError as exc:
-            return _json_response({"error": str(exc)}, status=404)
+            return _json_response({"error": str(exc)}, status=404, headers=cors_headers)
         except ValueError as exc:
-            return _json_response({"error": str(exc)}, status=400)
+            return _json_response({"error": str(exc)}, status=400, headers=cors_headers)
         except Exception as exc:
             _log_worker_exception(exc, method=method, path=path)
             return _json_response(
@@ -112,9 +158,10 @@ class Default(WorkerEntrypoint):
                     "error_type": type(exc).__name__,
                 },
                 status=500,
+                headers=cors_headers,
             )
 
-        return _json_response({"error": "Not found"}, status=404)
+        return _json_response({"error": "Not found"}, status=404, headers=cors_headers)
 
     async def scheduled(self, controller, env, ctx):
         await _collect_due(env)
@@ -748,8 +795,108 @@ def _build_kabum_search_url(search_term: str) -> str:
     return f"{KABUM_BASE_URL}/busca/{quote(slug)}"
 
 
-def _json_response(payload: Any, *, status: int = 200) -> Response:
-    return Response(json.dumps(payload, ensure_ascii=False), headers={"content-type": "application/json"}, status=status)
+def _json_response(payload: Any, *, status: int = 200, headers: dict[str, str] | None = None) -> Response:
+    response_headers = {"content-type": "application/json"}
+    if headers:
+        response_headers.update(headers)
+    return Response(json.dumps(payload, ensure_ascii=False), headers=response_headers, status=status)
+
+
+def _request_header(request: Any, name: str) -> str | None:
+    headers = getattr(request, "headers", None)
+    if headers is None:
+        return None
+    getter = getattr(headers, "get", None)
+    if not callable(getter):
+        return None
+    return _coerce_string(getter(name) or getter(name.lower()))
+
+
+def _cors_headers_for_response(*, origin: str | None, request_method: str) -> dict[str, str]:
+    if not origin or request_method not in CORS_ALLOWED_METHODS:
+        return {}
+    allowed_origin = _cors_allow_origin(origin, request_method)
+    if not allowed_origin:
+        return {}
+    return {
+        "access-control-allow-origin": allowed_origin,
+        "vary": "Origin",
+    }
+
+
+def _cors_preflight_response(
+    *,
+    origin: str | None,
+    access_control_request_method: str | None,
+    access_control_request_headers: str | None,
+) -> Response | None:
+    if not origin or not access_control_request_method:
+        return None
+    request_method = access_control_request_method.upper()
+    if request_method not in CORS_ALLOWED_METHODS:
+        return Response("", status=204)
+
+    if _CORS_MIDDLEWARE is not None:
+        status_line = "204 OK"
+        response_headers: list[tuple[str, str]] = []
+        environ = {
+            "REQUEST_METHOD": "OPTIONS",
+            "HTTP_ORIGIN": origin,
+            "HTTP_ACCESS_CONTROL_REQUEST_METHOD": request_method,
+        }
+        if access_control_request_headers:
+            environ["HTTP_ACCESS_CONTROL_REQUEST_HEADERS"] = access_control_request_headers
+
+        def _start_response(status: str, headers: list[tuple[str, str]], _exc_info=None):
+            nonlocal status_line, response_headers
+            status_line = status
+            response_headers = headers
+
+        _CORS_MIDDLEWARE(environ, _start_response)
+        serialized_headers = {str(key).lower(): str(value) for key, value in response_headers}
+        if "access-control-allow-origin" in serialized_headers:
+            serialized_headers.setdefault("vary", "Origin")
+        return Response("", headers=serialized_headers or None, status=_status_code_from_status_line(status_line))
+
+    allowed_origin = _cors_allow_origin(origin, request_method)
+    if not allowed_origin:
+        return Response("", status=204)
+    return Response(
+        "",
+        headers={
+            "access-control-allow-origin": allowed_origin,
+            "access-control-allow-methods": ", ".join(CORS_ALLOWED_METHODS),
+            "access-control-allow-headers": ", ".join(CORS_ALLOWED_HEADERS),
+            "access-control-max-age": str(CORS_MAX_AGE_SECONDS),
+            "vary": "Origin",
+        },
+        status=204,
+    )
+
+
+def _cors_allow_origin(origin: str, request_method: str) -> str | None:
+    if request_method not in CORS_ALLOWED_METHODS:
+        return None
+    if _CORS_MIDDLEWARE is not None:
+        _, allowed_origin = _CORS_MIDDLEWARE.selectPolicy(origin, request_method)
+        return str(allowed_origin) if allowed_origin else None
+
+    parsed = urlparse(origin)
+    if parsed.scheme not in {"http", "https"}:
+        return None
+    hostname = (parsed.hostname or "").lower()
+    if hostname == "drstone.leogendaryo.com":
+        return origin
+    if hostname in {"localhost", "127.0.0.1"}:
+        return origin
+    return None
+
+
+def _status_code_from_status_line(status_line: str) -> int:
+    try:
+        return int((status_line or "").split(" ", 1)[0])
+    except (TypeError, ValueError):
+        return 204
 
 
 async def _platform_fetch(url: str):
