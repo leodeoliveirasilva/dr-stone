@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "skills": {
+    "frontend-design": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "computedHash": "063a0e6448123cd359ad0044cc46b0e490cc7964d45ef4bb9fd842bd2ffbca67"
+    },
+    "infographic-creator": {
+      "source": "antvis/chart-visualization-skills",
+      "sourceType": "github",
+      "computedHash": "28d634f32712ca06aec83497aa3aef1fdc591d12845f464dd43c29d0ac0769f2"
+    },
+    "python-testing-patterns": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "computedHash": "a2cc64d28bbda77aeac8ec634ae38102a3b8d2314f3aa802811a44281c5d7838"
+    },
+    "vue-best-practices": {
+      "source": "hyf0/vue-skills",
+      "sourceType": "github",
+      "computedHash": "3df585ad31aec78fe55c56c1411262737e6b231677a3153dec512a882fde80cd"
+    },
+    "web-scraping": {
+      "source": "jamditis/claude-skills-journalism",
+      "sourceType": "github",
+      "computedHash": "32fbc852a134b1cf1ef62b115a5316846f792413cc0a2ddbaa5f43d4256ceb6d"
+    }
+  }
+}

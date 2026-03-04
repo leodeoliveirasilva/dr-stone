@@ -1,0 +1,37 @@
+# Python environments and dependencies
+.venv/
+.deps/
+
+# Python cache and test artifacts
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+*.py[cod]
+
+# Local environment files
+.env
+.env.local
+.env.*.local
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Frontend and Node artifacts
+node_modules/
+.nuxt/
+.output/
+.nitro/
+.cache/
+
+# Cloudflare and deployment artifacts
+.wrangler/
+
+# Editor and OS files
+.DS_Store
+Thumbs.db
