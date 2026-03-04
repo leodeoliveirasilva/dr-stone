@@ -57,7 +57,7 @@ The search collector is HTTP-first and reads server-rendered listing data:
 Install dependencies into a local target directory:
 
 ```bash
-python3 -m pip install --target .deps beautifulsoup4 httpx wsgicors pytest
+python3 -m pip install --target .deps beautifulsoup4 httpx pytest
 ```
 
 Run tests:
