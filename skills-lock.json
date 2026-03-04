@@ -6,6 +6,11 @@
       "sourceType": "github",
       "computedHash": "063a0e6448123cd359ad0044cc46b0e490cc7964d45ef4bb9fd842bd2ffbca67"
     },
+    "github-actions-templates": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "computedHash": "7a28cb13b9fa427ae39c943ceb25d81f8135f848e1a1d434dc86a75926f51035"
+    },
     "infographic-creator": {
       "source": "antvis/chart-visualization-skills",
       "sourceType": "github",

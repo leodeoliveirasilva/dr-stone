@@ -60,6 +60,13 @@ Run tests with Docker Compose:
 docker compose run --rm tests
 ```
 
+Run the Worker locally with Cloudflare's Python runtime:
+
+```bash
+uv sync --group dev
+uv run pywrangler dev
+```
+
 Add a tracked search:
 
 ```bash
@@ -91,3 +98,27 @@ PYTHONPATH=src:.deps python3 -m dr_stone.search_cli history --db-path .data/dr_s
 ```
 
 Environment variables are documented in `.env.example`.
+
+## Cloudflare Deployment
+
+This repository is set up to deploy a Python Worker to Cloudflare on every push to `master`, which is the branch event produced by a merged pull request.
+
+Before the workflow can deploy, create the Worker/D1 resources in Cloudflare and update [wrangler.jsonc](/home/leonardo-silva/workspace/personal/dr-stone/wrangler.jsonc):
+
+- set `database_id` to the real D1 database ID
+- set `preview_database_id` to the preview/local D1 database ID you want to use
+- keep the `DB` binding name aligned with the Worker code
+
+Add these GitHub repository secrets:
+
+- `CLOUDFLARE_ACCOUNT_ID`
+- `CLOUDFLARE_API_TOKEN`
+
+The deploy workflow is [deploy.yml](/home/leonardo-silva/workspace/personal/dr-stone/.github/workflows/deploy.yml). It:
+
+- installs the Python Worker toolchain with `uv`
+- runs `compileall` and `pytest`
+- applies remote D1 migrations from `migrations/`
+- deploys the Worker with `pywrangler`
+
+The Worker is configured with a cron trigger of `0 */6 * * *`, which runs 4 times per day on the Cloudflare free plan.
