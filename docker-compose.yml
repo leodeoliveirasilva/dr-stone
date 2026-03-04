@@ -3,7 +3,8 @@ services:
     build:
       context: .
       dockerfile: docker/test.Dockerfile
+    entrypoint: []
     working_dir: /app
     volumes:
       - .:/app
-    command: pytest
+    command: /opt/dr-stone-venv/bin/python -m pytest

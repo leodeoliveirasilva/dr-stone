@@ -60,6 +60,8 @@ Run tests with Docker Compose:
 docker compose run --rm tests
 ```
 
+The Docker test runner builds from Cloudflare's official Python sandbox image and then installs Python 3.12 inside the container so it stays aligned with this project's runtime requirement.
+
 Run the Worker locally with Cloudflare's Python runtime:
 
 ```bash

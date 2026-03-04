@@ -1,12 +1,18 @@
-FROM python:3.12-slim
+FROM docker.io/cloudflare/sandbox:0.7.0-python
 
 WORKDIR /app
+
+ENV TEST_VENV=/opt/dr-stone-venv
+ENV PATH="${TEST_VENV}/bin:${PATH}"
 
 COPY pyproject.toml README.md ./
 COPY src ./src
 COPY tests ./tests
 COPY migrations ./migrations
 
-RUN pip install --no-cache-dir -e '.[dev]'
+RUN python3 -m pip install --no-cache-dir uv \
+    && python3 -m uv python install 3.12 \
+    && python3 -m uv venv --seed --python 3.12 "${TEST_VENV}" \
+    && "${TEST_VENV}/bin/python" -m pip install --no-cache-dir -e '.[dev]'
 
-CMD ["pytest"]
+CMD ["/opt/dr-stone-venv/bin/python", "-m", "pytest"]
