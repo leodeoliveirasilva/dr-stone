@@ -5,6 +5,7 @@ import json
 from types import SimpleNamespace
 
 import entry
+import pytest
 from dr_stone.dashboard import render_dashboard_html
 
 
@@ -115,3 +116,12 @@ def test_render_dashboard_html_contains_key_sections() -> None:
     assert "<title>Dr. Stone Control Room</title>" in html
     assert "Runs by date" in html
     assert "Tracked products CRUD" in html
+
+
+def test_bind_params_keeps_none_locally() -> None:
+    assert entry._bind_params("a", None, 3) == ("a", None, 3)
+
+
+def test_platform_fetch_raises_clear_error_without_worker_runtime() -> None:
+    with pytest.raises(RuntimeError, match="Cloudflare fetch API is unavailable in this runtime"):
+        asyncio.run(entry._platform_fetch("https://example.com"))

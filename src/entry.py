@@ -476,22 +476,24 @@ async def _collect_tracked_product(env, tracked_product: dict[str, Any]) -> dict
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """
             ).bind(
-                _new_id(),
-                search_run_id,
-                tracked_product["id"],
-                item["source"],
-                item["title"],
-                item["canonical_url"],
-                item.get("source_product_key"),
-                item.get("seller_name"),
-                item["price"],
-                item["currency"],
-                item["availability"],
-                1 if item["is_available"] else 0,
-                item["position"],
-                run["fetched_at"],
-                json.dumps(item["metadata"], ensure_ascii=True, sort_keys=True),
-                _utc_now(),
+                *_bind_params(
+                    _new_id(),
+                    search_run_id,
+                    tracked_product["id"],
+                    item["source"],
+                    item["title"],
+                    item["canonical_url"],
+                    item.get("source_product_key"),
+                    item.get("seller_name"),
+                    item["price"],
+                    item["currency"],
+                    item["availability"],
+                    1 if item["is_available"] else 0,
+                    item["position"],
+                    run["fetched_at"],
+                    json.dumps(item["metadata"], ensure_ascii=True, sort_keys=True),
+                    _utc_now(),
+                )
             ).run()
 
         await _finish_search_run(
@@ -548,19 +550,21 @@ async def _collect_tracked_product(env, tracked_product: dict[str, Any]) -> dict
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """
         ).bind(
-            _new_id(),
-            search_run_id,
-            tracked_product["source_name"],
-            "search_collect",
-            "search_collect_failed",
-            type(exc).__name__,
-            str(exc),
-            0,
-            None,
-            search_url,
-            None,
-            json.dumps({}, ensure_ascii=True),
-            _utc_now(),
+            *_bind_params(
+                _new_id(),
+                search_run_id,
+                tracked_product["source_name"],
+                "search_collect",
+                "search_collect_failed",
+                type(exc).__name__,
+                str(exc),
+                0,
+                None,
+                search_url,
+                None,
+                json.dumps({}, ensure_ascii=True),
+                _utc_now(),
+            )
         ).run()
         await _finish_search_run(
             env,
@@ -607,14 +611,16 @@ async def _finish_search_run(
         WHERE id = ?
         """
     ).bind(
-        status,
-        finished_at,
-        duration_ms,
-        total_results,
-        matched_results,
-        page_count,
-        message,
-        search_run_id,
+        *_bind_params(
+            status,
+            finished_at,
+            duration_ms,
+            total_results,
+            matched_results,
+            page_count,
+            message,
+            search_run_id,
+        )
     ).run()
 
 
@@ -650,7 +656,7 @@ async def _scrape_kabum_search(search_term: str) -> dict[str, Any]:
 
 async def _scrape_kabum_search_page(url: str) -> dict[str, Any]:
     _log_event("info", "kabum_search_page_fetch_started", url=url)
-    response = await fetch(url)
+    response = await _platform_fetch(url)
     _log_event("info", "kabum_search_page_fetch_finished", url=url, status=response.status)
     if response.status != 200:
         raise ValueError(f"KaBuM search request failed with status {response.status}")
@@ -744,6 +750,28 @@ def _json_response(payload: Any, *, status: int = 200) -> Response:
 
 def _html_response(payload: str, *, status: int = 200) -> Response:
     return Response(payload, headers={"content-type": "text/html; charset=utf-8"}, status=status)
+
+
+async def _platform_fetch(url: str):
+    try:
+        from js import fetch as js_fetch
+    except ImportError as exc:  # pragma: no cover - only exercised in worker runtime
+        raise RuntimeError("Cloudflare fetch API is unavailable in this runtime") from exc
+    return await js_fetch(url)
+
+
+def _bind_params(*values: Any) -> tuple[Any, ...]:
+    return tuple(_bind_value(value) for value in values)
+
+
+def _bind_value(value: Any) -> Any:
+    if value is not None:
+        return value
+    try:
+        from js import null
+        return null
+    except ImportError:
+        return None
 
 
 def _log_event(level: str, message: str, **fields: Any) -> None:
