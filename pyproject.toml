@@ -24,8 +24,8 @@ dev = [
 dev = [
   "pytest>=8.3,<9",
   "pytest-cov>=6.0,<7",
-  "workers-py>=1.72.0",
-  "workers-runtime-sdk>=0.0.19",
+  "workers-py",
+  "workers-runtime-sdk",
 ]
 
 [project.scripts]
