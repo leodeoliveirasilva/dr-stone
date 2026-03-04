@@ -2,6 +2,14 @@
 
 Dr. Stone is a price-tracking project focused on collecting product data from the web and storing its history over time.
 
+This repository now contains only backend/API and scraping code.
+Frontend planning and implementation live in the sibling directory `../dr-stone-frontend`.
+Frontend onboarding docs are in:
+
+- `../dr-stone-frontend/docs/API_SPEC.md`
+- `../dr-stone-frontend/docs/TECHNOLOGY_SPEC.md`
+- `../dr-stone-frontend/docs/FRONTEND_SKILLS.md`
+
 The current implementation covers the first scraping foundation:
 
 - Python 3.12 package structure
@@ -39,6 +47,10 @@ The search collector is HTTP-first and reads server-rendered listing data:
 - `migrations/`: D1-compatible schema files
 - `docs/sources/`: source-specific scraping assumptions
 - `tests/`: pytest suite
+
+## API Entry
+
+- `GET /` returns `{"name":"dr-stone-api","status":"ok"}`
 
 ## Quick Start
 

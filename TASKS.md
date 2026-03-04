@@ -1,14 +1,17 @@
-# Dr. Stone Task Breakdown
+# Dr. Stone Backend Task Breakdown
 
-This file turns `PLAN.md` into a smaller, execution-oriented backlog.
+This file tracks backend-only execution tasks for `dr-stone`.
 
-Priority order for the MVP:
+Frontend scope moved to:
+`../dr-stone-frontend`
 
-1. Build a local Python scraping flow first
-2. Persist scraped history reliably
-3. Expose the data through a backend API
-4. Build the dashboard on top of that API
-5. Deploy and harden the system
+Priority order for backend MVP:
+
+1. Build local scraping flow
+2. Persist history reliably
+3. Expose data through backend API
+4. Automate collection with schedule
+5. Deploy and harden backend operations
 
 ## Milestone 1: Python Scraping Foundation
 
@@ -34,47 +37,30 @@ Definition of done:
 
 Goal: support one real source end to end with HTTP-first search extraction.
 
-- [x] Choose the first target store and document its product page structure
-- [x] Capture one or more sample HTML fixtures for parser development
-- [x] Implement the first source adapter with search-result extraction for title, price, currency, URL, and availability
+- [x] Choose first target store and document product listing structure
+- [x] Capture sample HTML fixtures for parser development
+- [x] Implement first source adapter with search-result extraction
 - [x] Add parser validation rules so empty or invalid values fail clearly
 - [x] Store raw extraction context useful for debugging
-- [x] Create a CLI or script entrypoint to run the adapter against a URL
-- [x] Verify the adapter works against fixture data and a live page
+- [x] Create CLI or script entrypoint to run adapter against a URL
+- [x] Verify adapter against fixture data and a live page
 
 Definition of done:
 
 - one supported store can be scraped repeatedly with stable output
 - failures include enough context to debug selector or response issues
 
-## Milestone 3: Scraping Quality Guardrails
-
-Goal: make the first scraper safe to extend.
-
-- [x] Add unit tests for price normalization
-- [x] Add fixture-based parser tests for the first adapter
-- [x] Add HTTP error handling for redirects, `4xx`, `5xx`, and empty bodies
-- [x] Add anti-block basics: realistic headers, pacing, and explicit retry limits
-- [x] Define when browser rendering is allowed instead of plain HTTP
-- [x] Add a failure record format for fetch errors, parse errors, and validation errors
-- [x] Document assumptions and limitations for the first store
-
-Definition of done:
-
-- the first adapter has repeatable tests
-- scraper behavior is explicit for the most common failure modes
-
-## Milestone 4: Database and History Storage
+## Milestone 3: Database and History Storage
 
 Goal: persist tracked searches, query runs, and lowest-price history.
 
-- [x] Define the initial schema for `tracked_products`
-- [x] Define the initial schema for `search_runs`
-- [x] Define the initial schema for `search_run_items`
-- [x] Define the initial schema for `scrape_failures`
-- [x] Create the first D1 migration files
+- [x] Define schema for `tracked_products`
+- [x] Define schema for `search_runs`
+- [x] Define schema for `search_run_items`
+- [x] Define schema for `scrape_failures`
+- [x] Create first D1 migration files
 - [x] Define append-only rules for historical search results
-- [x] Implement the write flow from a search run to persisted lowest prices
+- [x] Implement write flow from search run to persisted lowest prices
 - [x] Persist only the 4 minimum matching prices from each run
 - [x] Store timestamps consistently in UTC
 
@@ -83,132 +69,67 @@ Definition of done:
 - a successful search run creates tracked history rows
 - lowest-price history is saved for each scheduled run
 
-## Milestone 5: End-to-End Scraping Pipeline
-
-Goal: connect scraping and persistence in one runnable workflow.
-
-- [ ] Create an application service that loads tracked search terms and runs the correct source adapter
-- [ ] Persist successful scrapes and failed scrapes through one pipeline
-- [ ] Record scrape start, finish, duration, and status in `scrape_jobs`
-- [ ] Add an idempotent command to scrape one tracked search
-- [ ] Add an idempotent command to scrape all tracked searches
-- [ ] Match results using the stored product title without considering case
-- [ ] Persist only the 4 minimum prices from each search run
-- [ ] Validate that one full run produces job records, snapshots, and failures correctly
-
-Definition of done:
-
-- one command runs the full scrape pipeline for tracked searches
-- each run leaves a complete audit trail in the database
-
-## Milestone 6: Backend Service
+## Milestone 4: Backend API
 
 Goal: expose scraping and history data through a Cloudflare-compatible backend.
 
-- [ ] Create the backend project structure for the Worker layer
-- [ ] Add a health check endpoint
-- [ ] Add an endpoint to list tracked products
-- [ ] Add an endpoint to fetch product price history
-- [ ] Add chart-friendly response formatting by date and source
-- [ ] Keep aggregation logic in backend responses, not in the UI
-- [ ] Define environment bindings for D1 and other runtime config
+- [x] Create backend Worker layer
+- [x] Add health check endpoint
+- [x] Add endpoint to list tracked products
+- [x] Add endpoint to fetch product price history
+- [x] Add endpoint to query search runs by date
+- [ ] Add explicit API schema docs maintained with backend changes
 
 Definition of done:
 
-- the backend can serve tracked products and history data
-- the history endpoint is usable by the future frontend without reshaping on the client
+- backend can serve tracked products and history data
+- response contracts are stable and documented
 
-## Milestone 7: Scheduling and Automation
+## Milestone 5: Scheduling and Automation
 
 Goal: run collection without manual commands.
 
 - [ ] Define scrape frequency rules by tracked search term
-- [ ] Run each tracked search 4 times per day by default
-- [ ] Add Cron Trigger support for scheduled scraping
+- [x] Run each tracked search 4 times per day by default
+- [x] Add Cron Trigger support for scheduled scraping
 - [ ] Prevent overlapping or duplicate scheduled runs
 - [ ] Retry transient failures with explicit limits
 - [ ] Track run counts, durations, and failure rates
-- [ ] Add a simple operational view of the last scrape status per source
+- [ ] Add operational view of latest scrape status per source
 
 Definition of done:
 
-- scheduled runs can execute safely on a fixed cadence
+- scheduled runs execute safely on fixed cadence
 - duplicate and runaway jobs are controlled
 
-## Milestone 8: Additional Source Adapters
+## Milestone 6: Deployment and Operations
 
-Goal: expand source coverage without coupling the system to one store.
+Goal: run backend MVP on Cloudflare Free with clear limits.
 
-- [ ] Extract reusable adapter base utilities from the first store implementation
-- [ ] Add a second store adapter
-- [ ] Add a third store adapter if still inside MVP scope
-- [ ] Support fallback selectors per store
-- [ ] Reuse normalization and validation rules across adapters
-- [ ] Document source-specific assumptions, blockers, and escalation paths
-
-Definition of done:
-
-- at least two stores share the same adapter contract
-- new sources can be added without changing core pipeline logic
-
-## Milestone 9: Frontend Dashboard
-
-Goal: visualize tracked products and history.
-
-- [ ] Create the Nuxt frontend structure
-- [ ] Set up TypeScript, Tailwind, and Pinia
-- [ ] Create the main dashboard layout and navigation
-- [ ] Implement a product list view
-- [ ] Implement a product detail view
-- [ ] Add filters by product, source, and time range
-- [ ] Render price history charts with Apache ECharts
-- [ ] Connect frontend data fetching to backend endpoints
+- [x] Configure Worker deployment pipeline
+- [x] Bind D1 database to Worker environment
+- [ ] Configure development and production environments explicitly
+- [x] Configure Cron Trigger in production config
+- [ ] Monitor request volume and D1 usage
+- [ ] Document free-tier limits affecting scrape frequency
 
 Definition of done:
 
-- users can browse products and inspect price history visually
-- charts work from real backend data
-
-## Milestone 10: Deployment and Operations
-
-Goal: run the MVP on Cloudflare Free with clear limits.
-
-- [ ] Configure Pages deployment for the frontend
-- [ ] Configure Worker deployment for the backend
-- [ ] Bind the D1 database to the Worker environment
-- [ ] Configure development and production environments
-- [ ] Configure Cron Triggers in production
-- [ ] Monitor request volume, D1 usage, and browser-rendering usage
-- [ ] Document the free-tier limits that affect scrape frequency and source count
-
-Definition of done:
-
-- the MVP is deployed and scheduled in production
+- backend is deployed and scheduled in production
 - usage is visible enough to stay within free-tier constraints
 
-## Milestone 11: Hardening
+## Milestone 7: Hardening
 
-Goal: make the system stable enough for continuous use.
+Goal: make backend stable enough for continuous use.
 
 - [ ] Expand automated tests for services, adapters, and API responses
 - [ ] Add structured logs across scrape, persistence, and API layers
 - [ ] Add polite delays and rate limits per source
 - [ ] Review robots.txt and terms before enabling each source
 - [ ] Add operational docs for debugging failed scrapes
-- [ ] Define when to escalate from HTTP-first scraping to browser rendering
-- [ ] Review whether Cloudflare Python Workers remain a good fit or whether parts should move to TypeScript
+- [ ] Define clear criteria to escalate from HTTP-first scraping to browser rendering
 
 Definition of done:
 
-- the system is safer to operate continuously
+- backend is safer to operate continuously
 - scraping decisions and operational limits are documented
-
-## Suggested First Execution Slice
-
-If you want to start immediately, do these first:
-
-1. Create the Python project skeleton and dependencies
-2. Implement the shared scraper result model and scraper interface
-3. Build one HTTP-first adapter for a single store
-4. Add fixture-based tests for parsing and normalization
-5. Save the first successful scrape into D1

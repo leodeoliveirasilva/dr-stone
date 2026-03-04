@@ -23,7 +23,6 @@ except ImportError:  # pragma: no cover - local test fallback
     class WorkerEntrypoint:
         env: Any
 
-from dr_stone.dashboard import render_dashboard_html
 from dr_stone.matching import title_contains_expected
 from dr_stone.normalizers import normalize_availability, normalize_currency, normalize_price
 
@@ -44,7 +43,12 @@ class Default(WorkerEntrypoint):
 
         try:
             if path == "/" and method == "GET":
-                return _html_response(render_dashboard_html())
+                return _json_response(
+                    {
+                        "name": "dr-stone-api",
+                        "status": "ok",
+                    }
+                )
 
             if path == "/health" and method == "GET":
                 return _json_response({"status": "ok"})
@@ -746,10 +750,6 @@ def _build_kabum_search_url(search_term: str) -> str:
 
 def _json_response(payload: Any, *, status: int = 200) -> Response:
     return Response(json.dumps(payload, ensure_ascii=False), headers={"content-type": "application/json"}, status=status)
-
-
-def _html_response(payload: str, *, status: int = 200) -> Response:
-    return Response(payload, headers={"content-type": "text/html; charset=utf-8"}, status=status)
 
 
 async def _platform_fetch(url: str):

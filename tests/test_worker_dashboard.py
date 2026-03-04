@@ -6,7 +6,6 @@ from types import SimpleNamespace
 
 import entry
 import pytest
-from dr_stone.dashboard import render_dashboard_html
 
 
 class FakeRequest:
@@ -25,16 +24,15 @@ def _make_worker() -> entry.Default:
     return worker
 
 
-def test_root_serves_dashboard_html() -> None:
+def test_root_serves_api_descriptor() -> None:
     worker = _make_worker()
 
     response = asyncio.run(worker.fetch(FakeRequest("GET", "https://example.com/")))
 
     assert response.status == 200
-    assert response.headers["content-type"] == "text/html; charset=utf-8"
-    body = asyncio.run(response.text())
-    assert "Dr. Stone Control Room" in body
-    assert "Tracked products CRUD" in body
+    assert response.headers["content-type"] == "application/json"
+    payload = json.loads(asyncio.run(response.text()))
+    assert payload == {"name": "dr-stone-api", "status": "ok"}
 
 
 def test_search_runs_route_returns_filtered_runs(monkeypatch) -> None:
@@ -108,14 +106,6 @@ def test_collect_route_surfaces_runtime_error(monkeypatch) -> None:
         "error": "KaBuM search request failed with status 403",
         "error_type": "RuntimeError",
     }
-
-
-def test_render_dashboard_html_contains_key_sections() -> None:
-    html = render_dashboard_html()
-
-    assert "<title>Dr. Stone Control Room</title>" in html
-    assert "Runs by date" in html
-    assert "Tracked products CRUD" in html
 
 
 def test_bind_params_keeps_none_locally() -> None:
