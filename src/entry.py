@@ -7,8 +7,22 @@ from decimal import Decimal
 from typing import Any
 from urllib.parse import quote, urlparse
 
-from workers import Response, WorkerEntrypoint
+try:
+    from workers import Response, WorkerEntrypoint
+except ImportError:  # pragma: no cover - local test fallback
+    class Response:
+        def __init__(self, body: str = "", headers: dict[str, str] | None = None, status: int = 200):
+            self.body = body
+            self.headers = headers or {}
+            self.status = status
 
+        async def text(self) -> str:
+            return self.body
+
+    class WorkerEntrypoint:
+        env: Any
+
+from dr_stone.dashboard import render_dashboard_html
 from dr_stone.matching import title_contains_expected
 from dr_stone.normalizers import normalize_availability, normalize_currency, normalize_price
 
@@ -26,31 +40,59 @@ class Default(WorkerEntrypoint):
         path = url.path.rstrip("/") or "/"
         query = _parse_query_string(url.query)
 
-        if path == "/health" and method == "GET":
-            return _json_response({"status": "ok"})
+        try:
+            if path == "/" and method == "GET":
+                return _html_response(render_dashboard_html())
 
-        if path == "/tracked-products":
-            if method == "GET":
-                rows = await _fetch_all_tracked_products(self.env, include_inactive=query.get("all") == "1")
-                return _json_response(rows)
-            if method == "POST":
-                payload = await request.json()
-                created = await _create_tracked_product(self.env, payload)
-                return _json_response(created, status=201)
+            if path == "/health" and method == "GET":
+                return _json_response({"status": "ok"})
 
-        if path == "/collect-due" and method == "POST":
-            results = await _collect_due(self.env)
-            return _json_response(results)
+            if path == "/search-runs" and method == "GET":
+                date = _normalize_date(query.get("date"))
+                limit = _parse_positive_int(query.get("limit"), "limit", default=40, maximum=200)
+                rows = await _fetch_search_runs(self.env, date=date, limit=limit)
+                return _json_response({"date": date, "runs": rows})
 
-        if path.startswith("/tracked-products/"):
-            parts = [part for part in path.split("/") if part]
-            if len(parts) == 2 and method == "POST" and query.get("action") == "collect":
-                result = await _collect_one(self.env, parts[1])
-                return _json_response(result)
-            if len(parts) == 3 and parts[2] == "history" and method == "GET":
-                limit = int(query.get("limit", "100"))
-                history = await _history(self.env, parts[1], limit)
-                return _json_response(history)
+            if path == "/tracked-products":
+                if method == "GET":
+                    rows = await _fetch_all_tracked_products(self.env, include_inactive=query.get("all") == "1")
+                    return _json_response(rows)
+                if method == "POST":
+                    payload = await request.json()
+                    created = await _create_tracked_product(self.env, payload)
+                    return _json_response(created, status=201)
+
+            if path == "/collect-due" and method == "POST":
+                results = await _collect_due(self.env)
+                return _json_response(results)
+
+            if path.startswith("/tracked-products/"):
+                parts = [part for part in path.split("/") if part]
+                if len(parts) == 2 and method == "POST" and query.get("action") == "collect":
+                    result = await _collect_one(self.env, parts[1])
+                    return _json_response(result)
+                if len(parts) == 2 and method == "GET":
+                    product = await _get_tracked_product(self.env, parts[1])
+                    if product is None:
+                        raise LookupError(f"Tracked product not found: {parts[1]}")
+                    return _json_response(product)
+                if len(parts) == 2 and method in {"PUT", "PATCH"}:
+                    payload = await request.json()
+                    updated = await _update_tracked_product(self.env, parts[1], payload)
+                    return _json_response(updated)
+                if len(parts) == 2 and method == "DELETE":
+                    await _delete_tracked_product(self.env, parts[1])
+                    return Response("", status=204)
+                if len(parts) == 3 and parts[2] == "history" and method == "GET":
+                    limit = _parse_positive_int(query.get("limit"), "limit", default=100, maximum=500)
+                    history = await _history(self.env, parts[1], limit)
+                    return _json_response(history)
+        except LookupError as exc:
+            return _json_response({"error": str(exc)}, status=404)
+        except ValueError as exc:
+            return _json_response({"error": str(exc)}, status=400)
+        except Exception:
+            return _json_response({"error": "Internal server error"}, status=500)
 
         return _json_response({"error": "Not found"}, status=404)
 
@@ -59,10 +101,18 @@ class Default(WorkerEntrypoint):
 
 
 async def _create_tracked_product(env, payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValueError("JSON body must be an object")
+
     product_title = _require_string(payload, "title")
     search_term = _require_string(payload, "search_term")
     source = _coerce_string(payload.get("source")) or "kabum"
-    scrapes_per_day = int(payload.get("scrapes_per_day") or DEFAULT_SCRAPES_PER_DAY)
+    scrapes_per_day = _parse_positive_int(
+        payload.get("scrapes_per_day"),
+        "scrapes_per_day",
+        default=DEFAULT_SCRAPES_PER_DAY,
+        maximum=1440,
+    )
     active = 1 if payload.get("active", True) else 0
     tracked_product_id = _new_id()
     timestamp = _utc_now()
@@ -102,6 +152,17 @@ async def _create_tracked_product(env, payload: Any) -> dict[str, Any]:
     return _js_to_py(created)
 
 
+async def _get_tracked_product(env, tracked_product_id: str) -> dict[str, Any] | None:
+    row = await env.DB.prepare(
+        """
+        SELECT *
+        FROM tracked_products
+        WHERE id = ?
+        """
+    ).bind(tracked_product_id).first()
+    return _js_to_py(row)
+
+
 async def _fetch_all_tracked_products(env, *, include_inactive: bool = False) -> list[dict[str, Any]]:
     if include_inactive:
         result = await env.DB.prepare(
@@ -123,6 +184,62 @@ async def _fetch_all_tracked_products(env, *, include_inactive: bool = False) ->
     return _rows(result)
 
 
+async def _update_tracked_product(env, tracked_product_id: str, payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValueError("JSON body must be an object")
+
+    current = await _get_tracked_product(env, tracked_product_id)
+    if current is None:
+        raise LookupError(f"Tracked product not found: {tracked_product_id}")
+
+    product_title = _coerce_string(payload.get("title")) or str(current["product_title"])
+    search_term = _coerce_string(payload.get("search_term")) or str(current["search_term"])
+    source = _coerce_string(payload.get("source")) or str(current["source_name"])
+    scrapes_per_day = (
+        _parse_positive_int(payload.get("scrapes_per_day"), "scrapes_per_day", maximum=1440)
+        if "scrapes_per_day" in payload
+        else int(current["scrapes_per_day"])
+    )
+    active = (1 if payload.get("active") else 0) if "active" in payload else int(current["active"])
+
+    await env.DB.prepare(
+        """
+        UPDATE tracked_products
+        SET source_name = ?,
+            product_title = ?,
+            search_term = ?,
+            scrapes_per_day = ?,
+            active = ?,
+            updated_at = ?
+        WHERE id = ?
+        """
+    ).bind(
+        source,
+        product_title,
+        search_term,
+        scrapes_per_day,
+        active,
+        _utc_now(),
+        tracked_product_id,
+    ).run()
+    updated = await _get_tracked_product(env, tracked_product_id)
+    if updated is None:
+        raise LookupError(f"Tracked product not found: {tracked_product_id}")
+    return updated
+
+
+async def _delete_tracked_product(env, tracked_product_id: str) -> None:
+    existing = await _get_tracked_product(env, tracked_product_id)
+    if existing is None:
+        raise LookupError(f"Tracked product not found: {tracked_product_id}")
+    await env.DB.prepare(
+        """
+        DELETE FROM tracked_products
+        WHERE id = ?
+        """
+    ).bind(tracked_product_id).run()
+
+
 async def _history(env, tracked_product_id: str, limit: int) -> list[dict[str, Any]]:
     result = await env.DB.prepare(
         """
@@ -141,6 +258,68 @@ async def _history(env, tracked_product_id: str, limit: int) -> list[dict[str, A
         """
     ).bind(tracked_product_id, limit).run()
     return _rows(result)
+
+
+async def _fetch_search_runs(env, *, date: str | None, limit: int) -> list[dict[str, Any]]:
+    if date:
+        result = await env.DB.prepare(
+            """
+            SELECT
+                search_runs.*,
+                tracked_products.product_title AS tracked_product_title,
+                tracked_products.active AS tracked_product_active
+            FROM search_runs
+            LEFT JOIN tracked_products ON tracked_products.id = search_runs.tracked_product_id
+            WHERE substr(search_runs.started_at, 1, 10) = ?
+            ORDER BY search_runs.started_at DESC
+            LIMIT ?
+            """
+        ).bind(date, limit).run()
+    else:
+        result = await env.DB.prepare(
+            """
+            SELECT
+                search_runs.*,
+                tracked_products.product_title AS tracked_product_title,
+                tracked_products.active AS tracked_product_active
+            FROM search_runs
+            LEFT JOIN tracked_products ON tracked_products.id = search_runs.tracked_product_id
+            ORDER BY search_runs.started_at DESC
+            LIMIT ?
+            """
+        ).bind(limit).run()
+
+    rows = _rows(result)
+    if not rows:
+        return rows
+
+    run_ids = [str(row["id"]) for row in rows if row.get("id")]
+    placeholders = ", ".join("?" for _ in run_ids)
+    items_result = await env.DB.prepare(
+        f"""
+        SELECT
+            search_run_id,
+            product_title,
+            canonical_url,
+            price_value,
+            currency,
+            seller_name,
+            availability,
+            is_available,
+            position,
+            captured_at
+        FROM search_run_items
+        WHERE search_run_id IN ({placeholders})
+        ORDER BY captured_at DESC, CAST(price_value AS REAL) ASC, position ASC
+        """
+    ).bind(*run_ids).run()
+    grouped_items: dict[str, list[dict[str, Any]]] = {}
+    for item in _rows(items_result):
+        grouped_items.setdefault(str(item["search_run_id"]), []).append(item)
+
+    for row in rows:
+        row["items"] = grouped_items.get(str(row["id"]), [])
+    return rows
 
 
 async def _collect_due(env) -> list[dict[str, Any]]:
@@ -186,7 +365,7 @@ async def _collect_one(env, tracked_product_id: str) -> dict[str, Any]:
     ).bind(tracked_product_id).first()
     tracked_product_row = _js_to_py(tracked_product)
     if tracked_product_row is None:
-        raise ValueError(f"Tracked product not found: {tracked_product_id}")
+        raise LookupError(f"Tracked product not found: {tracked_product_id}")
     return await _collect_tracked_product(env, tracked_product_row)
 
 
@@ -479,6 +658,10 @@ def _json_response(payload: Any, *, status: int = 200) -> Response:
     return Response(json.dumps(payload, ensure_ascii=False), headers={"content-type": "application/json"}, status=status)
 
 
+def _html_response(payload: str, *, status: int = 200) -> Response:
+    return Response(payload, headers={"content-type": "text/html; charset=utf-8"}, status=status)
+
+
 def _parse_query_string(query: str) -> dict[str, str]:
     pairs = [part for part in query.split("&") if part]
     result: dict[str, str] = {}
@@ -513,6 +696,36 @@ def _require_string(payload: Any, field: str) -> str:
     if not value:
         raise ValueError(f"Missing required field: {field}")
     return value
+
+
+def _parse_positive_int(value: Any, field: str, *, default: int | None = None, maximum: int | None = None) -> int:
+    if value in (None, ""):
+        if default is not None:
+            return default
+        raise ValueError(f"Missing required field: {field}")
+
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Invalid integer for field: {field}") from exc
+
+    if parsed < 1:
+        raise ValueError(f"Field must be greater than zero: {field}")
+    if maximum is not None and parsed > maximum:
+        raise ValueError(f"Field is too large: {field}")
+    return parsed
+
+
+def _normalize_date(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = _coerce_string(value)
+    if normalized is None:
+        return None
+    try:
+        return datetime.strptime(normalized, "%Y-%m-%d").date().isoformat()
+    except ValueError as exc:
+        raise ValueError("Invalid date. Use YYYY-MM-DD.") from exc
 
 
 def _coerce_string(value: Any) -> str | None:
