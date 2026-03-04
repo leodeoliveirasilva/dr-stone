@@ -8,7 +8,7 @@ from bs4 import BeautifulSoup, Tag
 
 
 def make_soup(html: str) -> BeautifulSoup:
-    return BeautifulSoup(html, "lxml")
+    return BeautifulSoup(html, "html.parser")
 
 
 def first_text(soup: BeautifulSoup, selectors: list[str]) -> str | None:
