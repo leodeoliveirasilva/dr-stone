@@ -10,7 +10,10 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
   "beautifulsoup4>=4.13,<5",
+  "flask>=3.1,<4",
+  "gunicorn>=23,<24",
   "httpx>=0.28,<0.29",
+  "psycopg[binary]>=3.2,<4",
 ]
 
 [project.optional-dependencies]
@@ -23,12 +26,11 @@ dev = [
 dev = [
   "pytest>=8.3,<9",
   "pytest-cov>=6.0,<7",
-  "workers-py",
-  "workers-runtime-sdk",
 ]
 
 [project.scripts]
 dr-stone-search = "dr_stone.search_cli:main"
+dr-stone-worker = "dr_stone.worker:main"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

@@ -1,4 +1,4 @@
-FROM docker.io/cloudflare/sandbox:0.7.0-python
+FROM python:3.12-slim
 
 WORKDIR /app
 
@@ -14,5 +14,3 @@ RUN python3 -m pip install --no-cache-dir uv \
     && python3 -m uv python install 3.12 \
     && python3 -m uv venv --seed --python 3.12 "${TEST_VENV}" \
     && "${TEST_VENV}/bin/python" -m pip install --no-cache-dir -e '.[dev]'
-
-CMD ["/opt/dr-stone-venv/bin/python", "-m", "pytest"]

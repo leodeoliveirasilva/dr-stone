@@ -58,7 +58,7 @@ Goal: persist tracked searches, query runs, and lowest-price history.
 - [x] Define schema for `search_runs`
 - [x] Define schema for `search_run_items`
 - [x] Define schema for `scrape_failures`
-- [x] Create first D1 migration files
+- [x] Create first database migration files
 - [x] Define append-only rules for historical search results
 - [x] Implement write flow from search run to persisted lowest prices
 - [x] Persist only the 4 minimum matching prices from each run
@@ -71,9 +71,9 @@ Definition of done:
 
 ## Milestone 4: Backend API
 
-Goal: expose scraping and history data through a Cloudflare-compatible backend.
+Goal: expose scraping and history data through a Railway-hosted backend.
 
-- [x] Create backend Worker layer
+- [x] Create backend API layer
 - [x] Add health check endpoint
 - [x] Add endpoint to list tracked products
 - [x] Add endpoint to fetch product price history
@@ -91,7 +91,7 @@ Goal: run collection without manual commands.
 
 - [ ] Define scrape frequency rules by tracked search term
 - [x] Run each tracked search 4 times per day by default
-- [x] Add Cron Trigger support for scheduled scraping
+- [ ] Add scheduled trigger support for scraping
 - [ ] Prevent overlapping or duplicate scheduled runs
 - [ ] Retry transient failures with explicit limits
 - [ ] Track run counts, durations, and failure rates
@@ -104,14 +104,14 @@ Definition of done:
 
 ## Milestone 6: Deployment and Operations
 
-Goal: run backend MVP on Cloudflare Free with clear limits.
+Goal: run backend MVP on Railway with clear operating limits.
 
-- [x] Configure Worker deployment pipeline
-- [x] Bind D1 database to Worker environment
+- [x] Configure Railway deployment pipeline
+- [x] Bind Postgres database to API environment
 - [ ] Configure development and production environments explicitly
-- [x] Configure Cron Trigger in production config
-- [ ] Monitor request volume and D1 usage
-- [ ] Document free-tier limits affecting scrape frequency
+- [ ] Configure scheduled scraping in production
+- [ ] Monitor request volume and database usage
+- [ ] Document hosting and scrape-rate limits affecting collection frequency
 
 Definition of done:
 

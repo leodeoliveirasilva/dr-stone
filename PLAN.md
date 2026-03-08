@@ -19,7 +19,7 @@ Why:
 
 ### Recommended scraping approach
 
-For the initial version on **Cloudflare Free**, use **HTTP-first extraction in Python**.
+For the initial version on **Railway**, use **HTTP-first extraction in Python**.
 
 Why:
 
@@ -36,28 +36,28 @@ Use browser rendering only when a source cannot be scraped reliably with regular
 - Language: `Python 3.12+`
 - Scraping engine: `httpx` + parser first
 - HTML parsing: `BeautifulSoup` or `lxml`
-- API/backend: `Python Workers` on Cloudflare Workers
-- Database: `Cloudflare D1`
-- Scheduling: `Cron Triggers`
-- Queueing: `Cloudflare Queues` if needed later
+- API/backend: `Flask` served with `gunicorn`
+- Database: `Postgres` on Railway
+- Scheduling: internal or external cron trigger hitting the API
+- Queueing: optional future addition if needed later
 
-### Cloudflare deployment target
+### Railway deployment target
 
-The deployment target for this backend is **Cloudflare Free**.
+The deployment target for this backend is **Railway**.
 
 Preferred backend architecture:
 
-- run APIs and lightweight scraping jobs on `Cloudflare Workers`
-- use `D1` as the initial database
+- run the API in a Dockerized Python service on Railway
+- use `Postgres` as the primary database
 - keep browser rendering optional and constrained
 
-### Cloudflare Free constraints
+### Railway constraints
 
 Important limits to design around:
 
-- Pages Functions and Workers Free plan share `100,000` requests per day
-- D1 Free plan includes `5 million` rows read per day, `100,000` rows written per day, and `5 GB` storage
-- Browser Rendering Free plan includes `10 minutes` of browser usage per day
+- service memory and CPU limits on the selected Railway plan
+- Postgres storage growth and connection limits
+- scraper request volume and remote site rate limits
 
 Because of these limits, the first version should optimize for:
 
@@ -82,8 +82,8 @@ Goal: create a reliable base before scaling source coverage.
 Tasks:
 
 - define backend project structure
-- create the Cloudflare-compatible backend service
-- configure D1
+- create the Railway-compatible backend service
+- configure Postgres
 - create schema setup
 - define core database schema
 
@@ -108,7 +108,7 @@ Initial entities:
 Deliverables:
 
 - normalized schema
-- D1 migration files
+- Postgres migration files
 - clear historical record rules
 
 ## Phase 3: Scraping Core
@@ -127,7 +127,7 @@ Deliverables:
 
 - one end-to-end scraping pipeline
 - one supported source/store
-- stored price history in D1
+- stored price history in Postgres
 
 ## Phase 4: Scheduling and Automation
 
@@ -135,7 +135,7 @@ Goal: make collection continuous and safe.
 
 Tasks:
 
-- schedule recurring scraping jobs with Cron Triggers
+- schedule recurring scraping jobs
 - define frequency per tracked product
 - prevent duplicate runs
 - retry transient failures
@@ -165,19 +165,19 @@ Deliverables:
 
 ## Phase 6: Deployment and Operations
 
-Goal: deploy backend safely on Cloudflare Free and observe usage.
+Goal: deploy backend safely on Railway and observe usage.
 
 Tasks:
 
-- configure Worker deployment and environment bindings
-- bind D1 database to the Worker
-- configure Cron Triggers for scheduled scraping
+- configure Docker-based Railway deployment and environment bindings
+- bind Postgres to the API service
+- configure scheduled scraping entrypoints
 - define development and production environments
-- monitor request counts and D1 usage
+- monitor deploy health, runtime logs, and database usage
 
 Deliverables:
 
-- deployed Worker API
+- deployed Railway API
 - scheduled scrape execution in production
 - basic usage monitoring
 
@@ -200,6 +200,6 @@ Deliverables:
 
 ## Final Recommendation
 
-Keep this repository backend-only: Python Workers + D1, HTTP-first scraping, and stable API contracts.
+Keep this repository backend-only: Python API + Postgres on Railway, HTTP-first scraping, and stable API contracts.
 
 Use `../dr-stone-frontend` for frontend specs, UI implementation, and frontend deployment pipeline.

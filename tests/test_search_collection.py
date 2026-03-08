@@ -1,15 +1,13 @@
 from __future__ import annotations
 
-import json
 import logging
 from datetime import UTC, datetime
 from decimal import Decimal
-from pathlib import Path
 
 from dr_stone.models import SearchResultItem
 from dr_stone.scrapers.kabum_search import KabumSearchScraper
 from dr_stone.services.search_collection import SearchCollectionService
-from dr_stone.storage import SQLiteStorage
+from dr_stone.storage import PostgresStorage
 
 
 class StubKabumSearchScraper(KabumSearchScraper):
@@ -34,10 +32,8 @@ class StubKabumSearchScraper(KabumSearchScraper):
         )
 
 
-def test_collect_tracked_product_keeps_only_four_lowest_matching_prices(tmp_path: Path) -> None:
-    storage = SQLiteStorage(tmp_path / "dr_stone.sqlite3", logging.getLogger("test"))
-    storage.apply_migrations(Path(__file__).resolve().parents[1] / "migrations")
-    tracked_product = storage.create_tracked_product(
+def test_collect_tracked_product_keeps_only_four_lowest_matching_prices(postgres_storage: PostgresStorage) -> None:
+    tracked_product = postgres_storage.create_tracked_product(
         product_title="RX 9070 XT",
         search_term="RX 9070 XT",
     )
@@ -112,7 +108,7 @@ def test_collect_tracked_product_keeps_only_four_lowest_matching_prices(tmp_path
     ]
 
     service = SearchCollectionService(
-        storage=storage,
+        storage=postgres_storage,
         search_scraper=StubKabumSearchScraper(items),
         logger=logging.getLogger("test"),
     )
@@ -122,9 +118,9 @@ def test_collect_tracked_product_keeps_only_four_lowest_matching_prices(tmp_path
     assert result.total_results == 6
     assert result.matched_results == 4
 
-    with storage.connect() as connection:
+    with postgres_storage.connect() as connection:
         saved_rows = connection.execute(
-            "SELECT product_title, price_value FROM search_run_items ORDER BY CAST(price_value AS REAL) ASC"
+            "SELECT product_title, price_value FROM search_run_items ORDER BY CAST(price_value AS NUMERIC) ASC"
         ).fetchall()
         search_run = connection.execute(
             "SELECT status, total_results, matched_results FROM search_runs"

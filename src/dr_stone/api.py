@@ -1,0 +1,190 @@
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any
+
+from flask import Flask, Response, jsonify, request
+
+from dr_stone.config import Settings
+from dr_stone.logging import configure_logging
+from dr_stone.runtime import build_collection_service, build_postgres_storage
+
+
+def create_app() -> Flask:
+    app = Flask(__name__)
+
+    settings = Settings.from_env()
+    logger = configure_logging(settings.log_level)
+    storage = build_postgres_storage(logger)
+
+    @app.after_request
+    def add_cors_headers(response: Response) -> Response:
+        origin = request.headers.get("Origin", "*")
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Methods"] = "GET,POST,PUT,PATCH,DELETE,OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "content-type,authorization"
+        response.headers["Vary"] = "Origin"
+        return response
+
+    @app.route("/", methods=["GET"])
+    def root() -> Response:
+        return jsonify({"name": "dr-stone-api", "status": "ok"})
+
+    @app.route("/health", methods=["GET"])
+    def health() -> Response:
+        return jsonify({"status": "ok"})
+
+    @app.route("/search-runs", methods=["GET"])
+    def search_runs() -> Response:
+        date = request.args.get("date")
+        if date:
+            _validate_date(date)
+        limit = _parse_positive_int(request.args.get("limit"), "limit", default=40, maximum=200)
+        return jsonify({"date": date, "runs": storage.list_search_runs(date=date, limit=limit)})
+
+    @app.route("/tracked-products", methods=["GET", "POST", "OPTIONS"])
+    def tracked_products() -> Response:
+        if request.method == "OPTIONS":
+            return Response(status=204)
+        if request.method == "GET":
+            include_inactive = request.args.get("all") == "1"
+            products = storage.list_tracked_products(active_only=not include_inactive)
+            return jsonify([product.to_dict() for product in products])
+
+        payload = _require_json_object()
+        tracked_product = storage.create_tracked_product(
+            product_title=_require_string(payload, "title"),
+            search_term=_require_string(payload, "search_term"),
+            source=_coerce_string(payload.get("source")) or "kabum",
+            scrapes_per_day=_parse_positive_int(payload.get("scrapes_per_day"), "scrapes_per_day", default=4, maximum=1440),
+            active=bool(payload.get("active", True)),
+        )
+        return jsonify(tracked_product.to_dict()), 201
+
+    @app.route("/collect-due", methods=["POST", "OPTIONS"])
+    def collect_due() -> Response:
+        if request.method == "OPTIONS":
+            return Response(status=204)
+        service = build_collection_service(settings, logger, storage)
+        try:
+            results = service.collect_due()
+            return jsonify([result.to_dict() for result in results])
+        finally:
+            service.search_scraper.fetcher.close()
+
+    @app.route("/tracked-products/<tracked_product_id>", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
+    def tracked_product(tracked_product_id: str) -> Response:
+        if request.method == "OPTIONS":
+            return Response(status=204)
+
+        if request.method == "POST" and request.args.get("action") == "collect":
+            service = build_collection_service(settings, logger, storage)
+            try:
+                tracked = storage.get_tracked_product(tracked_product_id)
+                if tracked is None or not tracked.active:
+                    raise LookupError(f"Tracked product not found: {tracked_product_id}")
+                result = service.collect_tracked_product(tracked)
+                return jsonify(result.to_dict())
+            finally:
+                service.search_scraper.fetcher.close()
+
+        if request.method == "GET":
+            tracked = storage.get_tracked_product(tracked_product_id)
+            if tracked is None:
+                raise LookupError(f"Tracked product not found: {tracked_product_id}")
+            return jsonify(tracked.to_dict())
+
+        if request.method in {"PUT", "PATCH"}:
+            current = storage.get_tracked_product(tracked_product_id)
+            if current is None:
+                raise LookupError(f"Tracked product not found: {tracked_product_id}")
+            payload = _require_json_object()
+            updated = storage.update_tracked_product(
+                tracked_product_id,
+                product_title=_coerce_string(payload.get("title")) or current.product_title,
+                search_term=_coerce_string(payload.get("search_term")) or current.search_term,
+                source=_coerce_string(payload.get("source")) or current.source,
+                scrapes_per_day=(
+                    _parse_positive_int(payload.get("scrapes_per_day"), "scrapes_per_day", maximum=1440)
+                    if "scrapes_per_day" in payload
+                    else current.scrapes_per_day
+                ),
+                active=bool(payload.get("active")) if "active" in payload else current.active,
+            )
+            if updated is None:
+                raise LookupError(f"Tracked product not found: {tracked_product_id}")
+            return jsonify(updated.to_dict())
+
+        deleted = storage.delete_tracked_product(tracked_product_id)
+        if not deleted:
+            raise LookupError(f"Tracked product not found: {tracked_product_id}")
+        return Response(status=204)
+
+    @app.route("/tracked-products/<tracked_product_id>/history", methods=["GET"])
+    def tracked_product_history(tracked_product_id: str) -> Response:
+        limit = _parse_positive_int(request.args.get("limit"), "limit", default=100, maximum=500)
+        history_rows = storage.list_price_history(tracked_product_id, limit=limit)
+        return jsonify([row.to_dict() for row in history_rows])
+
+    @app.errorhandler(LookupError)
+    def handle_not_found(error: LookupError) -> tuple[Response, int]:
+        return jsonify({"error": str(error)}), 404
+
+    @app.errorhandler(ValueError)
+    def handle_bad_request(error: ValueError) -> tuple[Response, int]:
+        return jsonify({"error": str(error)}), 400
+
+    @app.errorhandler(Exception)
+    def handle_unexpected_error(error: Exception) -> tuple[Response, int]:
+        logger.exception("api_request_failed")
+        return jsonify({"error": str(error) or "Internal server error", "error_type": type(error).__name__}), 500
+
+    return app
+def _require_json_object() -> dict[str, Any]:
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        raise ValueError("JSON body must be an object")
+    return payload
+
+
+def _require_string(payload: dict[str, Any], key: str) -> str:
+    value = _coerce_string(payload.get(key))
+    if value is None:
+        raise ValueError(f"{key} is required")
+    return value
+
+
+def _coerce_string(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _parse_positive_int(
+    value: object,
+    field_name: str,
+    *,
+    default: int | None = None,
+    maximum: int | None = None,
+) -> int:
+    if value in {None, ""}:
+        if default is None:
+            raise ValueError(f"{field_name} is required")
+        return default
+    try:
+        parsed = int(str(value))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field_name} must be a positive integer.") from exc
+    if parsed <= 0:
+        raise ValueError(f"{field_name} must be a positive integer.")
+    if maximum is not None and parsed > maximum:
+        raise ValueError(f"{field_name} must be less than or equal to {maximum}.")
+    return parsed
+
+
+def _validate_date(value: str) -> None:
+    try:
+        datetime.strptime(value, "%Y-%m-%d")
+    except ValueError as exc:
+        raise ValueError("Invalid date. Use YYYY-MM-DD.") from exc

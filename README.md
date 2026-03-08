@@ -21,7 +21,7 @@ The current implementation covers the first scraping foundation:
 - case-insensitive matching between the tracked product title and the scraped result title
 - persistence of only the 4 lowest matching prices for each search run
 - due-run selection based on `scrapes_per_day`, with `4` runs per day as the default
-- D1-compatible SQLite migrations and persistence for tracked searches, runs, matched items, and failures
+- Postgres-backed persistence for tracked searches, runs, matched items, and failures
 
 The tracked search flow works like this:
 
@@ -44,7 +44,7 @@ The search collector is HTTP-first and reads server-rendered listing data:
 
 - `src/dr_stone/`: scraping package
 - `src/dr_stone/scrapers/`: source adapters
-- `migrations/`: D1-compatible schema files
+- `migrations/`: database schema files
 - `docs/sources/`: source-specific scraping assumptions
 - `tests/`: pytest suite
 
@@ -60,25 +60,39 @@ Install dependencies into a local target directory:
 python3 -m pip install --target .deps beautifulsoup4 httpx pytest
 ```
 
-Run tests:
+Run `pytest` directly if you only need the tests that do not require a Postgres service:
 
 ```bash
 PYTHONPATH=src:.deps python3 -m pytest
 ```
 
-Run tests with Docker Compose:
+Run the full Postgres-backed test suite with Docker Compose:
 
 ```bash
-docker compose run --rm tests
+docker compose run --build --rm tests
 ```
 
-The Docker test runner builds from Cloudflare's official Python sandbox image and then installs Python 3.12 inside the container so it stays aligned with this project's runtime requirement.
+The Docker test runner starts a Postgres container for the database-backed tests, then builds a Python 3.12 test image so the test environment stays aligned with this project's runtime requirement.
 
-Run the Worker locally with Cloudflare's Python runtime:
+Run the API locally against Postgres:
 
 ```bash
-uv sync --group dev
-uv run pywrangler dev
+export DATABASE_URL=postgresql://dr_stone:dr_stone@localhost:5432/dr_stone_test
+python -m flask --app dr_stone.api:create_app run --debug --host 0.0.0.0 --port 8000
+```
+
+Run the scheduled worker once:
+
+```bash
+export DATABASE_URL=postgresql://dr_stone:dr_stone@localhost:5432/dr_stone_test
+dr-stone-worker --run-once
+```
+
+Run the scheduled worker continuously:
+
+```bash
+export DATABASE_URL=postgresql://dr_stone:dr_stone@localhost:5432/dr_stone_test
+dr-stone-worker
 ```
 
 Add a tracked search:
@@ -113,26 +127,18 @@ PYTHONPATH=src:.deps python3 -m dr_stone.search_cli history --db-path .data/dr_s
 
 Environment variables are documented in `.env.example`.
 
-## Cloudflare Deployment
+## Railway Deployment
 
-This repository is set up to deploy a Python Worker to Cloudflare on every push to `master`, which is the branch event produced by a merged pull request.
+This repository is set up to deploy the API to Railway from the repo `Dockerfile` on every push to `master`.
 
-Before the workflow can deploy, create the Worker/D1 resources in Cloudflare and update [wrangler.jsonc](/home/leonardo-silva/workspace/personal/dr-stone/wrangler.jsonc):
+Add this GitHub repository secret:
 
-- set `database_id` to the real D1 database ID
-- set `preview_database_id` to the preview/local D1 database ID you want to use
-- keep the `DB` binding name aligned with the Worker code
-
-Add these GitHub repository secrets:
-
-- `CLOUDFLARE_ACCOUNT_ID`
-- `CLOUDFLARE_API_TOKEN`
+- `RAILWAY_TOKEN`
 
 The deploy workflow is [deploy.yml](/home/leonardo-silva/workspace/personal/dr-stone/.github/workflows/deploy.yml). It:
 
-- installs the Python Worker toolchain with `uv`
-- runs `compileall` and `pytest`
-- applies remote D1 migrations from `migrations/`
-- deploys the Worker with `pywrangler`
+- runs the Postgres-backed test suite with Docker Compose
+- links to the Railway project `dr-stone`
+- deploys the `dr-stone-api` service using the repo `Dockerfile`
 
-The Worker is configured with a cron trigger of `0 */6 * * *`, which runs 4 times per day on the Cloudflare free plan.
+To run background collection on Railway, create a second service from this repo and point it at [Dockerfile.worker](/home/leonardo-silva/workspace/personal/dr-stone/Dockerfile.worker). The worker runs one collection cycle immediately on boot, then repeats every `21600` seconds by default, which is 4 times per day.
