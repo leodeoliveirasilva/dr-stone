@@ -7,6 +7,7 @@ from flask import Flask, Response, jsonify, request
 
 from dr_stone.config import Settings
 from dr_stone.logging import configure_logging
+from dr_stone.models import TrackedProduct
 from dr_stone.runtime import build_collection_service, build_postgres_storage
 from dr_stone.search_terms import normalize_search_terms
 
@@ -50,7 +51,7 @@ def create_app() -> Flask:
         if request.method == "GET":
             include_inactive = request.args.get("all") == "1"
             products = storage.list_tracked_products(active_only=not include_inactive)
-            return jsonify([product.to_dict() for product in products])
+            return jsonify([_tracked_product_to_api_dict(product) for product in products])
 
         payload = _require_json_object()
         _reject_legacy_scrape_rate_fields(payload)
@@ -59,7 +60,7 @@ def create_app() -> Flask:
             search_terms=_require_search_terms(payload),
             active=bool(payload.get("active", True)),
         )
-        return jsonify(tracked_product.to_dict()), 201
+        return jsonify(_tracked_product_to_api_dict(tracked_product)), 201
 
     @app.route("/collect-due", methods=["POST", "OPTIONS"])
     def collect_due() -> Response:
@@ -92,7 +93,7 @@ def create_app() -> Flask:
             tracked = storage.get_tracked_product(tracked_product_id)
             if tracked is None:
                 raise LookupError(f"Tracked product not found: {tracked_product_id}")
-            return jsonify(tracked.to_dict())
+            return jsonify(_tracked_product_to_api_dict(tracked))
 
         if request.method in {"PUT", "PATCH"}:
             current = storage.get_tracked_product(tracked_product_id)
@@ -108,7 +109,7 @@ def create_app() -> Flask:
             )
             if updated is None:
                 raise LookupError(f"Tracked product not found: {tracked_product_id}")
-            return jsonify(updated.to_dict())
+            return jsonify(_tracked_product_to_api_dict(updated))
 
         deleted = storage.delete_tracked_product(tracked_product_id)
         if not deleted:
@@ -181,6 +182,17 @@ def _coerce_search_terms(payload: dict[str, Any]) -> list[str] | None:
 def _reject_legacy_scrape_rate_fields(payload: dict[str, Any]) -> None:
     if "scrapes_per_day" in payload:
         raise ValueError("scrapes_per_day is not supported per product. Collection cadence is global.")
+
+
+def _tracked_product_to_api_dict(tracked_product: TrackedProduct) -> dict[str, Any]:
+    return {
+        "id": tracked_product.id,
+        "title": tracked_product.product_title,
+        "search_terms": tracked_product.search_terms,
+        "active": tracked_product.active,
+        "created_at": tracked_product.created_at.isoformat(),
+        "updated_at": tracked_product.updated_at.isoformat(),
+    }
 
 
 def _parse_positive_int(

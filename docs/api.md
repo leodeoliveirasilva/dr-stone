@@ -40,7 +40,7 @@ Returns an array of tracked products:
 [
   {
     "id": "0d95d62b8f72457d9cd8d5d2c0f7b62f",
-    "product_title": "RX 9070 XT Sapphire",
+    "title": "RX 9070 XT Sapphire",
     "search_terms": ["RX 9070 XT", "Sapphire"],
     "active": true,
     "created_at": "2026-03-08T12:00:00+00:00",
@@ -74,6 +74,12 @@ Legacy compatibility:
 - `search_term` is still accepted as a legacy single-term alias when `search_terms` is not sent.
 
 Returns `201` with the created tracked product.
+
+Tracked-product responses use the same public fields on reads and writes:
+
+- `title`, not `product_title`
+- `search_terms`, not `search_term`
+- no `scrapes_per_day`
 
 ### `GET /tracked-products/<tracked_product_id>`
 

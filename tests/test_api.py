@@ -30,6 +30,11 @@ def test_tracked_product_crud(monkeypatch, postgres_database_url: str) -> None:
     assert create_response.status_code == 201
     tracked_product = create_response.get_json()
     tracked_product_id = tracked_product["id"]
+    assert tracked_product["title"] == "RX 9070 XT"
+    assert tracked_product["search_terms"] == ["RX 9070 XT", "Sapphire"]
+    assert "product_title" not in tracked_product
+    assert "search_term" not in tracked_product
+    assert "scrapes_per_day" not in tracked_product
 
     list_response = client.get("/tracked-products")
     history_response = client.get(f"/tracked-products/{tracked_product_id}")
@@ -38,9 +43,13 @@ def test_tracked_product_crud(monkeypatch, postgres_database_url: str) -> None:
 
     assert list_response.status_code == 200
     assert len(list_response.get_json()) == 1
+    assert list_response.get_json()[0]["title"] == "RX 9070 XT"
+    assert "product_title" not in list_response.get_json()[0]
     assert history_response.status_code == 200
-    assert history_response.get_json()["product_title"] == "RX 9070 XT"
+    assert history_response.get_json()["title"] == "RX 9070 XT"
     assert history_response.get_json()["search_terms"] == ["RX 9070 XT", "Sapphire"]
+    assert "product_title" not in history_response.get_json()
+    assert "search_term" not in history_response.get_json()
     assert "scrapes_per_day" not in history_response.get_json()
     assert delete_response.status_code == 204
     assert missing_response.status_code == 404
