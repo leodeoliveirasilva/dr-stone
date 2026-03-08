@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from decimal import Decimal
 
 from dr_stone.models import ScrapeFailure, SearchResultItem
@@ -17,7 +17,10 @@ def test_apply_migrations_creates_expected_tables(
 
     applied = storage.apply_migrations(migrations_dir)
 
-    assert applied == ["0001_initial_schema.sql"]
+    assert applied == [
+        "0001_initial_schema.sql",
+        "0002_tracked_product_search_terms.sql",
+    ]
 
     with storage.connect() as connection:
         tables = {
@@ -69,11 +72,13 @@ def test_record_failure_persists_structured_context(postgres_storage: PostgresSt
 def test_search_tracking_persists_runs_items_and_history(postgres_storage: PostgresStorage) -> None:
     tracked_product = postgres_storage.create_tracked_product(
         product_title="RX 9070 XT",
-        search_term="RX 9070 XT",
+        search_terms=["RX 9070 XT"],
     )
     search_run_id = postgres_storage.create_search_run(
-        tracked_product,
-        "https://www.kabum.com.br/busca/rx-9070-xt",
+        tracked_product_id=tracked_product.id,
+        source_name="kabum",
+        search_term="RX 9070 XT",
+        search_url="https://www.kabum.com.br/busca/rx-9070-xt",
     )
     inserted = postgres_storage.persist_search_run_items(
         search_run_id=search_run_id,
@@ -129,26 +134,37 @@ def test_search_tracking_persists_runs_items_and_history(postgres_storage: Postg
     assert history[0].price == Decimal("5999.99")
 
 
-def test_list_due_tracked_products_uses_scrapes_per_day_interval(postgres_storage: PostgresStorage) -> None:
-    now = datetime(2026, 3, 4, 12, 0, tzinfo=UTC)
-    due_product = postgres_storage.create_tracked_product(
+def test_list_due_tracked_products_returns_all_active_products(postgres_storage: PostgresStorage) -> None:
+    active_product = postgres_storage.create_tracked_product(
         product_title="RX 9070 XT",
-        search_term="RX 9070 XT",
-        scrapes_per_day=4,
+        search_terms=["RX 9070 XT"],
     )
-    recent_product = postgres_storage.create_tracked_product(
+    postgres_storage.create_tracked_product(
         product_title="RX 9060 XT",
-        search_term="RX 9060 XT",
-        scrapes_per_day=4,
+        search_terms=["RX 9060 XT"],
+        active=False,
     )
 
-    run_id = postgres_storage.create_search_run(recent_product, "https://www.kabum.com.br/busca/rx-9060-xt")
+    due = postgres_storage.list_due_tracked_products(now=datetime(2026, 3, 4, 12, 0, tzinfo=UTC))
+
+    assert [product.id for product in due] == [active_product.id]
+
+
+def test_create_tracked_product_persists_search_terms_json(postgres_storage: PostgresStorage) -> None:
+    tracked_product = postgres_storage.create_tracked_product(
+        product_title="RX 9070 XT Sapphire",
+        search_terms=["RX 9070 XT", "Sapphire"],
+    )
+
     with postgres_storage.connect() as connection:
-        connection.execute(
-            "UPDATE search_runs SET status = %s, finished_at = %s WHERE id = %s",
-            ("succeeded", (now - timedelta(hours=2)).isoformat(), run_id),
-        )
+        row = connection.execute(
+            "SELECT source_name, search_term, search_terms_json FROM tracked_products WHERE id = %s",
+            (tracked_product.id,),
+        ).fetchone()
 
-    due = postgres_storage.list_due_tracked_products(now=now)
-
-    assert [product.id for product in due] == [due_product.id]
+    assert tracked_product.search_terms == ["RX 9070 XT", "Sapphire"]
+    assert dict(row) == {
+        "source_name": "all",
+        "search_term": "RX 9070 XT Sapphire",
+        "search_terms_json": '["RX 9070 XT", "Sapphire"]',
+    }

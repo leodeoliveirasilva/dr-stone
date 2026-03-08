@@ -8,6 +8,7 @@ from flask import Flask, Response, jsonify, request
 from dr_stone.config import Settings
 from dr_stone.logging import configure_logging
 from dr_stone.runtime import build_collection_service, build_postgres_storage
+from dr_stone.search_terms import normalize_search_terms
 
 
 def create_app() -> Flask:
@@ -52,11 +53,10 @@ def create_app() -> Flask:
             return jsonify([product.to_dict() for product in products])
 
         payload = _require_json_object()
+        _reject_legacy_scrape_rate_fields(payload)
         tracked_product = storage.create_tracked_product(
             product_title=_require_string(payload, "title"),
-            search_term=_require_string(payload, "search_term"),
-            source=_coerce_string(payload.get("source")) or "kabum",
-            scrapes_per_day=_parse_positive_int(payload.get("scrapes_per_day"), "scrapes_per_day", default=4, maximum=1440),
+            search_terms=_require_search_terms(payload),
             active=bool(payload.get("active", True)),
         )
         return jsonify(tracked_product.to_dict()), 201
@@ -70,7 +70,7 @@ def create_app() -> Flask:
             results = service.collect_due()
             return jsonify([result.to_dict() for result in results])
         finally:
-            service.search_scraper.fetcher.close()
+            service.close()
 
     @app.route("/tracked-products/<tracked_product_id>", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
     def tracked_product(tracked_product_id: str) -> Response:
@@ -86,7 +86,7 @@ def create_app() -> Flask:
                 result = service.collect_tracked_product(tracked)
                 return jsonify(result.to_dict())
             finally:
-                service.search_scraper.fetcher.close()
+                service.close()
 
         if request.method == "GET":
             tracked = storage.get_tracked_product(tracked_product_id)
@@ -99,16 +99,11 @@ def create_app() -> Flask:
             if current is None:
                 raise LookupError(f"Tracked product not found: {tracked_product_id}")
             payload = _require_json_object()
+            _reject_legacy_scrape_rate_fields(payload)
             updated = storage.update_tracked_product(
                 tracked_product_id,
                 product_title=_coerce_string(payload.get("title")) or current.product_title,
-                search_term=_coerce_string(payload.get("search_term")) or current.search_term,
-                source=_coerce_string(payload.get("source")) or current.source,
-                scrapes_per_day=(
-                    _parse_positive_int(payload.get("scrapes_per_day"), "scrapes_per_day", maximum=1440)
-                    if "scrapes_per_day" in payload
-                    else current.scrapes_per_day
-                ),
+                search_terms=_coerce_search_terms(payload) or current.search_terms,
                 active=bool(payload.get("active")) if "active" in payload else current.active,
             )
             if updated is None:
@@ -140,6 +135,8 @@ def create_app() -> Flask:
         return jsonify({"error": str(error) or "Internal server error", "error_type": type(error).__name__}), 500
 
     return app
+
+
 def _require_json_object() -> dict[str, Any]:
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
@@ -159,6 +156,31 @@ def _coerce_string(value: object) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _require_search_terms(payload: dict[str, Any]) -> list[str]:
+    search_terms = _coerce_search_terms(payload)
+    if search_terms is None:
+        raise ValueError("search_terms is required")
+    return search_terms
+
+
+def _coerce_search_terms(payload: dict[str, Any]) -> list[str] | None:
+    if "search_terms" in payload:
+        raw_terms = payload.get("search_terms")
+        if not isinstance(raw_terms, list):
+            raise ValueError("search_terms must be an array of strings.")
+        return normalize_search_terms(raw_terms)
+
+    legacy_search_term = _coerce_string(payload.get("search_term"))
+    if legacy_search_term is not None:
+        return normalize_search_terms([legacy_search_term])
+    return None
+
+
+def _reject_legacy_scrape_rate_fields(payload: dict[str, Any]) -> None:
+    if "scrapes_per_day" in payload:
+        raise ValueError("scrapes_per_day is not supported per product. Collection cadence is global.")
 
 
 def _parse_positive_int(

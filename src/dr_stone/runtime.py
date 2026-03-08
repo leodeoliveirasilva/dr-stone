@@ -53,9 +53,15 @@ def build_collection_service(
     logger,
     storage: PostgresStorage,
 ) -> SearchCollectionService:
-    fetcher = HttpFetcher(settings, logger)
-    scraper = KabumSearchScraper(fetcher, logger)
-    return SearchCollectionService(storage=storage, search_scraper=scraper, logger=logger)
+    return SearchCollectionService(
+        storage=storage,
+        search_scrapers=build_search_scrapers(settings, logger),
+        logger=logger,
+    )
+
+
+def build_search_scrapers(settings: Settings, logger) -> list[KabumSearchScraper]:
+    return [KabumSearchScraper(HttpFetcher(settings, logger), logger)]
 
 
 def project_root() -> Path:

@@ -4,7 +4,7 @@ import json
 import logging
 import sqlite3
 from collections.abc import Mapping
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from uuid import uuid4
@@ -18,6 +18,7 @@ from dr_stone.models import (
     SearchResultItem,
     TrackedProduct,
 )
+from dr_stone.search_terms import build_search_query, normalize_search_terms
 
 
 class SQLiteStorage:
@@ -71,11 +72,11 @@ class SQLiteStorage:
         self,
         *,
         product_title: str,
-        search_term: str,
-        source: str = "kabum",
-        scrapes_per_day: int = 4,
+        search_terms: list[str],
         active: bool = True,
     ) -> TrackedProduct:
+        normalized_terms = normalize_search_terms(search_terms)
+        search_query = build_search_query(normalized_terms)
         tracked_product_id = _new_id()
         timestamp = _utc_now()
         with self.connect() as connection:
@@ -86,18 +87,20 @@ class SQLiteStorage:
                     source_name,
                     product_title,
                     search_term,
+                    search_terms_json,
                     scrapes_per_day,
                     active,
                     created_at,
                     updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     tracked_product_id,
-                    source,
+                    "all",
                     product_title,
-                    search_term,
-                    scrapes_per_day,
+                    search_query,
+                    json.dumps(normalized_terms, ensure_ascii=True),
+                    4,
                     int(active),
                     timestamp,
                     timestamp,
@@ -111,15 +114,11 @@ class SQLiteStorage:
         self,
         *,
         active_only: bool = True,
-        source: str | None = None,
     ) -> list[TrackedProduct]:
         query = "SELECT * FROM tracked_products WHERE 1 = 1"
         params: list[object] = []
         if active_only:
             query += " AND active = 1"
-        if source:
-            query += " AND source_name = ?"
-            params.append(source)
         query += " ORDER BY created_at ASC"
 
         with self.connect() as connection:
@@ -130,39 +129,8 @@ class SQLiteStorage:
         self,
         *,
         now: datetime | None = None,
-        source: str | None = None,
     ) -> list[TrackedProduct]:
-        current_time = now or datetime.now(UTC)
-        tracked_products = self.list_tracked_products(active_only=True, source=source)
-        due_products: list[TrackedProduct] = []
-
-        with self.connect() as connection:
-            for tracked_product in tracked_products:
-                latest_run = connection.execute(
-                    """
-                    SELECT status, started_at, finished_at
-                    FROM search_runs
-                    WHERE tracked_product_id = ?
-                    ORDER BY started_at DESC
-                    LIMIT 1
-                    """,
-                    (tracked_product.id,),
-                ).fetchone()
-
-                if latest_run is None:
-                    due_products.append(tracked_product)
-                    continue
-
-                if latest_run["status"] == "running":
-                    continue
-
-                reference_value = latest_run["finished_at"] or latest_run["started_at"]
-                reference_time = datetime.fromisoformat(str(reference_value))
-                interval_seconds = 86400 / max(1, tracked_product.scrapes_per_day)
-                if current_time >= reference_time + timedelta(seconds=interval_seconds):
-                    due_products.append(tracked_product)
-
-        return due_products
+        return self.list_tracked_products(active_only=True)
 
     def get_tracked_product(self, tracked_product_id: str) -> TrackedProduct | None:
         with self.connect() as connection:
@@ -174,7 +142,14 @@ class SQLiteStorage:
             return None
         return self._row_to_tracked_product(row)
 
-    def create_search_run(self, tracked_product: TrackedProduct, search_url: str) -> str:
+    def create_search_run(
+        self,
+        *,
+        tracked_product_id: str,
+        source_name: str,
+        search_term: str,
+        search_url: str,
+    ) -> str:
         search_run_id = _new_id()
         timestamp = _utc_now()
         with self.connect() as connection:
@@ -193,9 +168,9 @@ class SQLiteStorage:
                 """,
                 (
                     search_run_id,
-                    tracked_product.id,
-                    tracked_product.source,
-                    tracked_product.search_term,
+                    tracked_product_id,
+                    source_name,
+                    search_term,
                     search_url,
                     "running",
                     timestamp,
@@ -373,10 +348,8 @@ class SQLiteStorage:
     def _row_to_tracked_product(self, row: Mapping[str, object]) -> TrackedProduct:
         return TrackedProduct(
             id=str(row["id"]),
-            source=str(row["source_name"]),
             product_title=str(row["product_title"]),
-            search_term=str(row["search_term"]),
-            scrapes_per_day=int(row["scrapes_per_day"]),
+            search_terms=_parse_search_terms_row(row),
             active=bool(row["active"]),
             created_at=datetime.fromisoformat(str(row["created_at"])),
             updated_at=datetime.fromisoformat(str(row["updated_at"])),
@@ -441,11 +414,11 @@ class PostgresStorage:
         self,
         *,
         product_title: str,
-        search_term: str,
-        source: str = "kabum",
-        scrapes_per_day: int = 4,
+        search_terms: list[str],
         active: bool = True,
     ) -> TrackedProduct:
+        normalized_terms = normalize_search_terms(search_terms)
+        search_query = build_search_query(normalized_terms)
         tracked_product_id = _new_id()
         timestamp = _utc_now()
         with self.connect() as connection:
@@ -456,18 +429,20 @@ class PostgresStorage:
                     source_name,
                     product_title,
                     search_term,
+                    search_terms_json,
                     scrapes_per_day,
                     active,
                     created_at,
                     updated_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     tracked_product_id,
-                    source,
+                    "all",
                     product_title,
-                    search_term,
-                    scrapes_per_day,
+                    search_query,
+                    json.dumps(normalized_terms, ensure_ascii=True),
+                    4,
                     int(active),
                     timestamp,
                     timestamp,
@@ -481,15 +456,11 @@ class PostgresStorage:
         self,
         *,
         active_only: bool = True,
-        source: str | None = None,
     ) -> list[TrackedProduct]:
         query = "SELECT * FROM tracked_products WHERE 1 = 1"
         params: list[object] = []
         if active_only:
             query += " AND active = 1"
-        if source:
-            query += " AND source_name = %s"
-            params.append(source)
         query += " ORDER BY created_at ASC"
 
         with self.connect() as connection:
@@ -500,39 +471,8 @@ class PostgresStorage:
         self,
         *,
         now: datetime | None = None,
-        source: str | None = None,
     ) -> list[TrackedProduct]:
-        current_time = now or datetime.now(UTC)
-        tracked_products = self.list_tracked_products(active_only=True, source=source)
-        due_products: list[TrackedProduct] = []
-
-        with self.connect() as connection:
-            for tracked_product in tracked_products:
-                latest_run = connection.execute(
-                    """
-                    SELECT status, started_at, finished_at
-                    FROM search_runs
-                    WHERE tracked_product_id = %s
-                    ORDER BY started_at DESC
-                    LIMIT 1
-                    """,
-                    (tracked_product.id,),
-                ).fetchone()
-
-                if latest_run is None:
-                    due_products.append(tracked_product)
-                    continue
-
-                if latest_run["status"] == "running":
-                    continue
-
-                reference_value = latest_run["finished_at"] or latest_run["started_at"]
-                reference_time = datetime.fromisoformat(str(reference_value))
-                interval_seconds = 86400 / max(1, tracked_product.scrapes_per_day)
-                if current_time >= reference_time + timedelta(seconds=interval_seconds):
-                    due_products.append(tracked_product)
-
-        return due_products
+        return self.list_tracked_products(active_only=True)
 
     def get_tracked_product(self, tracked_product_id: str) -> TrackedProduct | None:
         with self.connect() as connection:
@@ -544,7 +484,14 @@ class PostgresStorage:
             return None
         return self._row_to_tracked_product(row)
 
-    def create_search_run(self, tracked_product: TrackedProduct, search_url: str) -> str:
+    def create_search_run(
+        self,
+        *,
+        tracked_product_id: str,
+        source_name: str,
+        search_term: str,
+        search_url: str,
+    ) -> str:
         search_run_id = _new_id()
         timestamp = _utc_now()
         with self.connect() as connection:
@@ -563,9 +510,9 @@ class PostgresStorage:
                 """,
                 (
                     search_run_id,
-                    tracked_product.id,
-                    tracked_product.source,
-                    tracked_product.search_term,
+                    tracked_product_id,
+                    source_name,
+                    search_term,
                     search_url,
                     "running",
                     timestamp,
@@ -701,11 +648,11 @@ class PostgresStorage:
         tracked_product_id: str,
         *,
         product_title: str,
-        search_term: str,
-        source: str,
-        scrapes_per_day: int,
+        search_terms: list[str],
         active: bool,
     ) -> TrackedProduct | None:
+        normalized_terms = normalize_search_terms(search_terms)
+        search_query = build_search_query(normalized_terms)
         with self.connect() as connection:
             connection.execute(
                 """
@@ -713,16 +660,18 @@ class PostgresStorage:
                 SET source_name = %s,
                     product_title = %s,
                     search_term = %s,
+                    search_terms_json = %s,
                     scrapes_per_day = %s,
                     active = %s,
                     updated_at = %s
                 WHERE id = %s
                 """,
                 (
-                    source,
+                    "all",
                     product_title,
-                    search_term,
-                    scrapes_per_day,
+                    search_query,
+                    json.dumps(normalized_terms, ensure_ascii=True),
+                    4,
                     int(active),
                     _utc_now(),
                     tracked_product_id,
@@ -857,10 +806,8 @@ class PostgresStorage:
     def _row_to_tracked_product(self, row: Mapping[str, object]) -> TrackedProduct:
         return TrackedProduct(
             id=str(row["id"]),
-            source=str(row["source_name"]),
             product_title=str(row["product_title"]),
-            search_term=str(row["search_term"]),
-            scrapes_per_day=int(row["scrapes_per_day"]),
+            search_terms=_parse_search_terms_row(row),
             active=bool(row["active"]),
             created_at=datetime.fromisoformat(str(row["created_at"])),
             updated_at=datetime.fromisoformat(str(row["updated_at"])),
@@ -891,3 +838,20 @@ def _coerce_text(value: object) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _parse_search_terms_row(row: Mapping[str, object]) -> list[str]:
+    search_terms_json = _mapping_get(row, "search_terms_json")
+    if search_terms_json:
+        payload = json.loads(str(search_terms_json))
+        if isinstance(payload, list):
+            return normalize_search_terms(payload)
+    legacy_search_term = _mapping_get(row, "search_term")
+    return normalize_search_terms([legacy_search_term])
+
+
+def _mapping_get(row: Mapping[str, object], key: str) -> object | None:
+    try:
+        return row[key]
+    except (KeyError, IndexError):
+        return None

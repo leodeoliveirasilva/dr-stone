@@ -39,10 +39,8 @@ class ScrapeFailure:
 @dataclass(frozen=True, slots=True)
 class TrackedProduct:
     id: str
-    source: str
     product_title: str
-    search_term: str
-    scrapes_per_day: int
+    search_terms: list[str]
     active: bool
     created_at: datetime
     updated_at: datetime
@@ -50,10 +48,8 @@ class TrackedProduct:
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
-            "source": self.source,
             "product_title": self.product_title,
-            "search_term": self.search_term,
-            "scrapes_per_day": self.scrapes_per_day,
+            "search_terms": self.search_terms,
             "active": self.active,
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
@@ -113,7 +109,9 @@ class SearchRunResult:
 @dataclass(frozen=True, slots=True)
 class SearchCollectionResult:
     tracked_product_id: str
-    search_run_id: str
+    search_run_ids: list[str]
+    successful_runs: int
+    failed_runs: int
     total_results: int
     matched_results: int
     page_count: int
@@ -121,7 +119,9 @@ class SearchCollectionResult:
     def to_dict(self) -> dict[str, Any]:
         return {
             "tracked_product_id": self.tracked_product_id,
-            "search_run_id": self.search_run_id,
+            "search_run_ids": self.search_run_ids,
+            "successful_runs": self.successful_runs,
+            "failed_runs": self.failed_runs,
             "total_results": self.total_results,
             "matched_results": self.matched_results,
             "page_count": self.page_count,

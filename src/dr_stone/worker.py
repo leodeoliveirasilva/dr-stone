@@ -46,7 +46,7 @@ def main(argv: list[str] | None = None) -> int:
             run_once=args.run_once,
         )
     finally:
-        service.search_scraper.fetcher.close()
+        service.close()
     return 0
 
 

@@ -17,23 +17,30 @@ The current implementation covers the first scraping foundation:
 - configurable pacing, explicit empty-body handling, and structured scrape failures
 - normalization helpers for price, currency, and availability
 - structured JSON logging
-- a KaBuM search collector for tracked search terms
-- case-insensitive matching between the tracked product title and the scraped result title
-- persistence of only the 4 lowest matching prices for each search run
-- due-run selection based on `scrapes_per_day`, with `4` runs per day as the default
+- a registry-based search collector that runs every tracked product against every registered source
+- support for up to 5 tracked search terms per product
+- case-insensitive matching that requires all tracked search terms to appear in the scraped result title
+- persistence of only the 4 lowest matching prices for each source-specific search run
+- one global collection cadence, with `4` runs per day as the default worker interval
 - Postgres-backed persistence for tracked searches, runs, matched items, and failures
 
 The tracked search flow works like this:
 
-- store a product title and a search term in the database
-- scrape KaBuM search results for that term
-- keep only results whose title contains the stored product title, ignoring case
-- persist only the 4 cheapest matching results for each run
-- schedule each tracked search to run 4 times per day
+- store a product title and `1..5` search terms in the database
+- build one source query by joining the tracked search terms with spaces
+- run that query against every registered source adapter in the project
+- keep only results whose title contains all tracked search terms, ignoring case
+- persist only the 4 cheapest matching results for each source-specific run
+- run the worker on one global schedule for all tracked searches
 
-## Current KaBuM Strategy
+Tracked products are no longer pinned to one source. Search runs still record their concrete `source_name`, but the tracked product itself is source-agnostic.
+Tracked products also no longer carry their own scrape frequency. The collection cadence is global and controlled by the worker interval.
 
-The search collector is HTTP-first and reads server-rendered listing data:
+## Current Source Strategy
+
+All tracked products are collected from every registered scraper in `src/dr_stone/scrapers/`.
+
+Today, the only registered source is KaBuM, and its collector is HTTP-first and reads server-rendered listing data:
 
 - fetch the KaBuM search/listing page with regular HTTP
 - parse the embedded `__NEXT_DATA__` payload
@@ -45,11 +52,13 @@ The search collector is HTTP-first and reads server-rendered listing data:
 - `src/dr_stone/`: scraping package
 - `src/dr_stone/scrapers/`: source adapters
 - `migrations/`: database schema files
+- `docs/api.md`: HTTP API contract
 - `docs/sources/`: source-specific scraping assumptions
 - `tests/`: pytest suite
 
-## API Entry
+## API Docs
 
+- API reference: [docs/api.md](/home/leonardo-silva/workspace/personal/dr-stone/docs/api.md)
 - `GET /` returns `{"name":"dr-stone-api","status":"ok"}`
 
 ## Quick Start
@@ -98,7 +107,7 @@ dr-stone-worker
 Add a tracked search:
 
 ```bash
-PYTHONPATH=src:.deps python3 -m dr_stone.search_cli add --db-path .data/dr_stone.sqlite3 --title "RX 9070 XT" --search-term "RX 9070 XT"
+PYTHONPATH=src:.deps python3 -m dr_stone.search_cli add --db-path .data/dr_stone.sqlite3 --title "RX 9070 XT Sapphire" --search-term "RX 9070 XT" --search-term "Sapphire"
 ```
 
 Collect tracked searches:
@@ -112,6 +121,8 @@ Collect only searches that are due now:
 ```bash
 PYTHONPATH=src:.deps python3 -m dr_stone.search_cli collect-due --db-path .data/dr_stone.sqlite3
 ```
+
+`collect-due` is kept as a compatibility alias and follows the same global cadence as `collect`.
 
 List tracked searches:
 

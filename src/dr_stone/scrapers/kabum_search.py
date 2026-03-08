@@ -34,6 +34,9 @@ class KabumSearchScraper:
         self.fetcher = fetcher
         self.logger = logger
 
+    def close(self) -> None:
+        self.fetcher.close()
+
     def search(self, search_term: str) -> SearchRunResult:
         initial_url = self.build_search_url(search_term)
         first_response = self.fetcher.get(initial_url)
