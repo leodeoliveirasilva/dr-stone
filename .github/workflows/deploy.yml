@@ -35,8 +35,5 @@ jobs:
       - name: Install Railway CLI
         run: npm install -g @railway/cli
 
-      - name: Link Railway project
-        run: railway link --project 7ebbad4b-dbc7-46b5-afd2-5850a0fe69d0 --environment production
-
       - name: Deploy to Railway with Dockerfile
-        run: railway up --service dr-stone-api --ci -m "GitHub Actions deploy ${GITHUB_SHA}"
+        run: railway up --service dr-stone-api --project 7ebbad4b-dbc7-46b5-afd2-5850a0fe69d0 --environment production --ci -m "GitHub Actions deploy ${GITHUB_SHA}"
