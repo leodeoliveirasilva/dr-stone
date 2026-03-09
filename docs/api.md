@@ -169,6 +169,45 @@ Returns an array of saved price points:
 ]
 ```
 
+### `GET /price-history/minimums`
+
+Query params:
+
+- `product_id` required.
+- `period` required and must be `day`, `week`, or `month`.
+- `start_at` required. Accepts `YYYY-MM-DD` or an ISO 8601 datetime.
+- `end_at` required. Accepts `YYYY-MM-DD` or an ISO 8601 datetime.
+
+Returns the lowest saved price found in each period inside the requested range:
+
+```json
+{
+  "product_id": "0d95d62b8f72457d9cd8d5d2c0f7b62f",
+  "period": "week",
+  "start_at": "2026-03-01T00:00:00+00:00",
+  "end_at": "2026-03-31T23:59:59.999999+00:00",
+  "items": [
+    {
+      "period_start": "2026-03-02T00:00:00+00:00",
+      "captured_at": "2026-03-04T12:00:00+00:00",
+      "product_title": "Placa de Video Sapphire Pulse Radeon RX 9070 XT 16GB",
+      "canonical_url": "https://www.kabum.com.br/produto/1/rx-9070-xt",
+      "price": "5499.99",
+      "currency": "BRL",
+      "seller_name": "KaBuM!",
+      "search_run_id": "23df7f417d9147ed86c57018de93f6c9"
+    }
+  ]
+}
+```
+
+Notes:
+
+- `items` are ordered ascending by `period_start`.
+- `week` buckets start on Monday at `00:00:00+00:00`.
+- If `start_at` or `end_at` is sent as a date only, the API expands it to the full UTC day boundary.
+- Empty ranges return `"items": []`.
+
 ### `GET /search-runs`
 
 Query params:

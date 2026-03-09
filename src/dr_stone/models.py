@@ -148,3 +148,27 @@ class SearchHistoryEntry:
             "seller_name": self.seller_name,
             "search_run_id": self.search_run_id,
         }
+
+
+@dataclass(frozen=True, slots=True)
+class PeriodMinimumPriceEntry:
+    period_start: datetime
+    captured_at: datetime
+    product_title: str
+    canonical_url: str
+    price: Decimal
+    currency: str
+    seller_name: str | None
+    search_run_id: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "period_start": self.period_start.isoformat(),
+            "captured_at": self.captured_at.isoformat(),
+            "product_title": self.product_title,
+            "canonical_url": self.canonical_url,
+            "price": str(self.price),
+            "currency": self.currency,
+            "seller_name": self.seller_name,
+            "search_run_id": self.search_run_id,
+        }

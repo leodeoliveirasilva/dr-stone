@@ -1,6 +1,12 @@
 from __future__ import annotations
 
+import logging
+from datetime import UTC, datetime
+from decimal import Decimal
+
 from dr_stone.api import create_app
+from dr_stone.models import SearchResultItem
+from dr_stone.storage import PostgresStorage
 
 
 def test_root_and_health_endpoints(monkeypatch, postgres_database_url: str) -> None:
@@ -91,4 +97,157 @@ def test_tracked_product_rejects_per_product_scrape_rate(monkeypatch, postgres_d
     assert response.status_code == 400
     assert response.get_json() == {
         "error": "scrapes_per_day is not supported per product. Collection cadence is global."
+    }
+
+
+def test_price_history_minimums_endpoint_groups_by_period(monkeypatch, postgres_database_url: str) -> None:
+    monkeypatch.setenv("DATABASE_URL", postgres_database_url)
+    app = create_app()
+    client = app.test_client()
+
+    create_response = client.post(
+        "/tracked-products",
+        json={"title": "RX 9070 XT", "search_terms": ["RX 9070 XT"]},
+    )
+    product_id = create_response.get_json()["id"]
+
+    storage = PostgresStorage(postgres_database_url, logging.getLogger("test"))
+
+    def persist_item(captured_at: datetime, price: str, product_key: str) -> None:
+        search_run_id = storage.create_search_run(
+            tracked_product_id=product_id,
+            source_name="kabum",
+            search_term="RX 9070 XT",
+            search_url="https://www.kabum.com.br/busca/rx-9070-xt",
+        )
+        inserted = storage.persist_search_run_items(
+            search_run_id=search_run_id,
+            tracked_product_id=product_id,
+            items=[
+                SearchResultItem(
+                    source="kabum",
+                    title=f"Placa RX 9070 XT {product_key}",
+                    canonical_url=f"https://www.kabum.com.br/produto/{product_key}/rx-9070-xt",
+                    price=Decimal(price),
+                    currency="BRL",
+                    availability="in_stock",
+                    is_available=True,
+                    position=1,
+                    metadata={"source_product_key": product_key, "seller_name": "KaBuM!"},
+                )
+            ],
+            captured_at=captured_at,
+        )
+        storage.finish_search_run(
+            search_run_id,
+            status="succeeded",
+            total_results=10,
+            matched_results=inserted,
+            page_count=1,
+            message="lowest_prices_saved",
+        )
+
+    persist_item(datetime(2026, 3, 2, 8, 0, tzinfo=UTC), "6100.00", "1")
+    persist_item(datetime(2026, 3, 2, 15, 0, tzinfo=UTC), "5900.00", "2")
+    persist_item(datetime(2026, 3, 4, 12, 0, tzinfo=UTC), "5800.00", "3")
+    persist_item(datetime(2026, 3, 10, 9, 30, tzinfo=UTC), "5700.00", "4")
+    persist_item(datetime(2026, 4, 2, 9, 30, tzinfo=UTC), "5600.00", "5")
+
+    day_response = client.get(
+        "/price-history/minimums",
+        query_string={
+            "product_id": product_id,
+            "period": "day",
+            "start_at": "2026-03-01",
+            "end_at": "2026-03-31",
+        },
+    )
+    week_response = client.get(
+        "/price-history/minimums",
+        query_string={
+            "product_id": product_id,
+            "period": "week",
+            "start_at": "2026-03-01T00:00:00Z",
+            "end_at": "2026-03-31T23:59:59Z",
+        },
+    )
+    month_response = client.get(
+        "/price-history/minimums",
+        query_string={
+            "product_id": product_id,
+            "period": "month",
+            "start_at": "2026-03-01",
+            "end_at": "2026-04-30",
+        },
+    )
+
+    assert day_response.status_code == 200
+    assert day_response.get_json() == {
+        "product_id": product_id,
+        "period": "day",
+        "start_at": "2026-03-01T00:00:00+00:00",
+        "end_at": "2026-03-31T23:59:59.999999+00:00",
+        "items": [
+            {
+                "period_start": "2026-03-02T00:00:00+00:00",
+                "captured_at": "2026-03-02T15:00:00+00:00",
+                "product_title": "Placa RX 9070 XT 2",
+                "canonical_url": "https://www.kabum.com.br/produto/2/rx-9070-xt",
+                "price": "5900.00",
+                "currency": "BRL",
+                "seller_name": "KaBuM!",
+                "search_run_id": day_response.get_json()["items"][0]["search_run_id"],
+            },
+            {
+                "period_start": "2026-03-04T00:00:00+00:00",
+                "captured_at": "2026-03-04T12:00:00+00:00",
+                "product_title": "Placa RX 9070 XT 3",
+                "canonical_url": "https://www.kabum.com.br/produto/3/rx-9070-xt",
+                "price": "5800.00",
+                "currency": "BRL",
+                "seller_name": "KaBuM!",
+                "search_run_id": day_response.get_json()["items"][1]["search_run_id"],
+            },
+            {
+                "period_start": "2026-03-10T00:00:00+00:00",
+                "captured_at": "2026-03-10T09:30:00+00:00",
+                "product_title": "Placa RX 9070 XT 4",
+                "canonical_url": "https://www.kabum.com.br/produto/4/rx-9070-xt",
+                "price": "5700.00",
+                "currency": "BRL",
+                "seller_name": "KaBuM!",
+                "search_run_id": day_response.get_json()["items"][2]["search_run_id"],
+            },
+        ],
+    }
+    assert week_response.status_code == 200
+    assert [(item["period_start"], item["price"]) for item in week_response.get_json()["items"]] == [
+        ("2026-03-02T00:00:00+00:00", "5800.00"),
+        ("2026-03-09T00:00:00+00:00", "5700.00"),
+    ]
+    assert month_response.status_code == 200
+    assert [(item["period_start"], item["price"]) for item in month_response.get_json()["items"]] == [
+        ("2026-03-01T00:00:00+00:00", "5700.00"),
+        ("2026-04-01T00:00:00+00:00", "5600.00"),
+    ]
+
+
+def test_price_history_minimums_endpoint_validates_period(monkeypatch, postgres_database_url: str) -> None:
+    monkeypatch.setenv("DATABASE_URL", postgres_database_url)
+    app = create_app()
+    client = app.test_client()
+
+    response = client.get(
+        "/price-history/minimums",
+        query_string={
+            "product_id": "missing",
+            "period": "year",
+            "start_at": "2026-03-01",
+            "end_at": "2026-03-31",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.get_json() == {
+        "error": "period must be one of: day, week, month."
     }

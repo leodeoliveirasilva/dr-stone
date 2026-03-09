@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, date, datetime, time
 from typing import Any
 
 from flask import Flask, Response, jsonify, request
@@ -122,6 +122,35 @@ def create_app() -> Flask:
         history_rows = storage.list_price_history(tracked_product_id, limit=limit)
         return jsonify([row.to_dict() for row in history_rows])
 
+    @app.route("/price-history/minimums", methods=["GET"])
+    def price_history_minimums() -> Response:
+        product_id = _require_query_string(request.args.get("product_id"), "product_id")
+        period = _parse_period(request.args.get("period"))
+        start_at = _parse_datetime_query_param(request.args.get("start_at"), "start_at")
+        end_at = _parse_datetime_query_param(request.args.get("end_at"), "end_at", end_of_day=True)
+        if start_at > end_at:
+            raise ValueError("start_at must be less than or equal to end_at.")
+
+        tracked_product = storage.get_tracked_product(product_id)
+        if tracked_product is None:
+            raise LookupError(f"Tracked product not found: {product_id}")
+
+        minimum_rows = storage.list_period_minimum_prices(
+            product_id,
+            period=period,
+            start_at=start_at,
+            end_at=end_at,
+        )
+        return jsonify(
+            {
+                "product_id": product_id,
+                "period": period,
+                "start_at": start_at.isoformat(),
+                "end_at": end_at.isoformat(),
+                "items": [row.to_dict() for row in minimum_rows],
+            }
+        )
+
     @app.errorhandler(LookupError)
     def handle_not_found(error: LookupError) -> tuple[Response, int]:
         return jsonify({"error": str(error)}), 404
@@ -150,6 +179,13 @@ def _require_string(payload: dict[str, Any], key: str) -> str:
     if value is None:
         raise ValueError(f"{key} is required")
     return value
+
+
+def _require_query_string(value: object, field_name: str) -> str:
+    text = _coerce_string(value)
+    if text is None:
+        raise ValueError(f"{field_name} is required")
+    return text
 
 
 def _coerce_string(value: object) -> str | None:
@@ -215,6 +251,37 @@ def _parse_positive_int(
     if maximum is not None and parsed > maximum:
         raise ValueError(f"{field_name} must be less than or equal to {maximum}.")
     return parsed
+
+
+def _parse_period(value: object) -> str:
+    period = _require_query_string(value, "period").lower()
+    if period not in {"day", "week", "month"}:
+        raise ValueError("period must be one of: day, week, month.")
+    return period
+
+
+def _parse_datetime_query_param(
+    value: object,
+    field_name: str,
+    *,
+    end_of_day: bool = False,
+) -> datetime:
+    text = _require_query_string(value, field_name)
+    normalized = text.replace("Z", "+00:00")
+
+    try:
+        if "T" not in normalized and " " not in normalized:
+            parsed_date = date.fromisoformat(normalized)
+            boundary = time.max if end_of_day else time.min
+            return datetime.combine(parsed_date, boundary, tzinfo=UTC)
+
+        parsed_datetime = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise ValueError(f"Invalid {field_name}. Use YYYY-MM-DD or ISO 8601 datetime.") from exc
+
+    if parsed_datetime.tzinfo is None:
+        return parsed_datetime.replace(tzinfo=UTC)
+    return parsed_datetime.astimezone(UTC)
 
 
 def _validate_date(value: str) -> None:

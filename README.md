@@ -81,6 +81,12 @@ Run the full Postgres-backed test suite with Docker Compose:
 docker compose run --build --rm tests
 ```
 
+`TEST_DATABASE_URL` is read from `.env`. The default local value is:
+
+```bash
+TEST_DATABASE_URL=postgresql://dr_stone:dr_stone@postgres:5432/dr_stone_test
+```
+
 The Docker test runner starts a Postgres container for the database-backed tests, then builds a Python 3.12 test image so the test environment stays aligned with this project's runtime requirement.
 
 Run the API locally against Postgres:

@@ -20,6 +20,7 @@ def test_apply_migrations_creates_expected_tables(
     assert applied == [
         "0001_initial_schema.sql",
         "0002_tracked_product_search_terms.sql",
+        "0003_price_history_indexes.sql",
     ]
 
     with storage.connect() as connection:
@@ -168,3 +169,83 @@ def test_create_tracked_product_persists_search_terms_json(postgres_storage: Pos
         "search_term": "RX 9070 XT Sapphire",
         "search_terms_json": '["RX 9070 XT", "Sapphire"]',
     }
+
+
+def test_list_period_minimum_prices_groups_by_day_week_and_month(postgres_storage: PostgresStorage) -> None:
+    tracked_product = postgres_storage.create_tracked_product(
+        product_title="RX 9070 XT",
+        search_terms=["RX 9070 XT"],
+    )
+
+    def persist_item(captured_at: datetime, price: str, product_key: str) -> None:
+        search_run_id = postgres_storage.create_search_run(
+            tracked_product_id=tracked_product.id,
+            source_name="kabum",
+            search_term="RX 9070 XT",
+            search_url="https://www.kabum.com.br/busca/rx-9070-xt",
+        )
+        inserted = postgres_storage.persist_search_run_items(
+            search_run_id=search_run_id,
+            tracked_product_id=tracked_product.id,
+            items=[
+                SearchResultItem(
+                    source="kabum",
+                    title=f"Placa RX 9070 XT {product_key}",
+                    canonical_url=f"https://www.kabum.com.br/produto/{product_key}/rx-9070-xt",
+                    price=Decimal(price),
+                    currency="BRL",
+                    availability="in_stock",
+                    is_available=True,
+                    position=1,
+                    metadata={"source_product_key": product_key, "seller_name": "KaBuM!"},
+                )
+            ],
+            captured_at=captured_at,
+        )
+        postgres_storage.finish_search_run(
+            search_run_id,
+            status="succeeded",
+            total_results=20,
+            matched_results=inserted,
+            page_count=1,
+            message="lowest_prices_saved",
+        )
+
+    persist_item(datetime(2026, 3, 2, 9, 0, tzinfo=UTC), "6100.00", "1")
+    persist_item(datetime(2026, 3, 2, 18, 0, tzinfo=UTC), "5900.00", "2")
+    persist_item(datetime(2026, 3, 4, 10, 0, tzinfo=UTC), "5800.00", "3")
+    persist_item(datetime(2026, 3, 10, 11, 0, tzinfo=UTC), "5700.00", "4")
+    persist_item(datetime(2026, 4, 2, 11, 0, tzinfo=UTC), "5600.00", "5")
+
+    day_rows = postgres_storage.list_period_minimum_prices(
+        tracked_product.id,
+        period="day",
+        start_at=datetime(2026, 3, 1, 0, 0, tzinfo=UTC),
+        end_at=datetime(2026, 3, 31, 23, 59, 59, tzinfo=UTC),
+    )
+    week_rows = postgres_storage.list_period_minimum_prices(
+        tracked_product.id,
+        period="week",
+        start_at=datetime(2026, 3, 1, 0, 0, tzinfo=UTC),
+        end_at=datetime(2026, 3, 31, 23, 59, 59, tzinfo=UTC),
+    )
+    month_rows = postgres_storage.list_period_minimum_prices(
+        tracked_product.id,
+        period="month",
+        start_at=datetime(2026, 3, 1, 0, 0, tzinfo=UTC),
+        end_at=datetime(2026, 4, 30, 23, 59, 59, tzinfo=UTC),
+    )
+
+    assert [(row.period_start.isoformat(), row.price) for row in day_rows] == [
+        ("2026-03-02T00:00:00+00:00", Decimal("5900.00")),
+        ("2026-03-04T00:00:00+00:00", Decimal("5800.00")),
+        ("2026-03-10T00:00:00+00:00", Decimal("5700.00")),
+    ]
+    assert [(row.period_start.isoformat(), row.price) for row in week_rows] == [
+        ("2026-03-02T00:00:00+00:00", Decimal("5800.00")),
+        ("2026-03-09T00:00:00+00:00", Decimal("5700.00")),
+    ]
+    assert [(row.period_start.isoformat(), row.price) for row in month_rows] == [
+        ("2026-03-01T00:00:00+00:00", Decimal("5700.00")),
+        ("2026-04-01T00:00:00+00:00", Decimal("5600.00")),
+    ]

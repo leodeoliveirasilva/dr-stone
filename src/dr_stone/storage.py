@@ -13,10 +13,15 @@ import psycopg
 from psycopg.rows import dict_row
 
 from dr_stone.models import (
+    PeriodMinimumPriceEntry,
     ScrapeFailure,
     SearchHistoryEntry,
     SearchResultItem,
     TrackedProduct,
+)
+from dr_stone.repositories import (
+    PostgresPriceHistoryRepository,
+    SQLitePriceHistoryRepository,
 )
 from dr_stone.search_terms import build_search_query, normalize_search_terms
 
@@ -25,6 +30,7 @@ class SQLiteStorage:
     def __init__(self, database_path: str | Path, logger: logging.Logger) -> None:
         self.database_path = Path(database_path)
         self.logger = logger
+        self.price_history_repository = SQLitePriceHistoryRepository()
 
     def connect(self) -> sqlite3.Connection:
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
@@ -282,24 +288,28 @@ class SQLiteStorage:
         limit: int = 100,
     ) -> list[SearchHistoryEntry]:
         with self.connect() as connection:
-            rows = connection.execute(
-                """
-                SELECT
-                    captured_at,
-                    product_title,
-                    canonical_url,
-                    price_value,
-                    currency,
-                    seller_name,
-                    search_run_id
-                FROM search_run_items
-                WHERE tracked_product_id = ?
-                ORDER BY captured_at DESC, CAST(price_value AS REAL) ASC
-                LIMIT ?
-                """,
-                (tracked_product_id, limit),
-            ).fetchall()
-        return [self._row_to_history_entry(row) for row in rows]
+            return self.price_history_repository.list_history(
+                connection,
+                tracked_product_id,
+                limit=limit,
+            )
+
+    def list_period_minimum_prices(
+        self,
+        tracked_product_id: str,
+        *,
+        period: str,
+        start_at: datetime,
+        end_at: datetime,
+    ) -> list[PeriodMinimumPriceEntry]:
+        with self.connect() as connection:
+            return self.price_history_repository.list_period_minimums(
+                connection,
+                tracked_product_id,
+                period=period,
+                start_at=start_at,
+                end_at=end_at,
+            )
 
     def record_failure(
         self,
@@ -371,6 +381,7 @@ class PostgresStorage:
     def __init__(self, database_url: str, logger: logging.Logger) -> None:
         self.database_url = database_url
         self.logger = logger
+        self.price_history_repository = PostgresPriceHistoryRepository()
 
     def connect(self) -> psycopg.Connection:
         return psycopg.connect(self.database_url, row_factory=dict_row)
@@ -624,24 +635,28 @@ class PostgresStorage:
         limit: int = 100,
     ) -> list[SearchHistoryEntry]:
         with self.connect() as connection:
-            rows = connection.execute(
-                """
-                SELECT
-                    captured_at,
-                    product_title,
-                    canonical_url,
-                    price_value,
-                    currency,
-                    seller_name,
-                    search_run_id
-                FROM search_run_items
-                WHERE tracked_product_id = %s
-                ORDER BY captured_at DESC, CAST(price_value AS NUMERIC) ASC
-                LIMIT %s
-                """,
-                (tracked_product_id, limit),
-            ).fetchall()
-        return [self._row_to_history_entry(row) for row in rows]
+            return self.price_history_repository.list_history(
+                connection,
+                tracked_product_id,
+                limit=limit,
+            )
+
+    def list_period_minimum_prices(
+        self,
+        tracked_product_id: str,
+        *,
+        period: str,
+        start_at: datetime,
+        end_at: datetime,
+    ) -> list[PeriodMinimumPriceEntry]:
+        with self.connect() as connection:
+            return self.price_history_repository.list_period_minimums(
+                connection,
+                tracked_product_id,
+                period=period,
+                start_at=start_at,
+                end_at=end_at,
+            )
 
     def update_tracked_product(
         self,
