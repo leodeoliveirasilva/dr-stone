@@ -22,10 +22,11 @@ def create_app() -> Flask:
     @app.after_request
     def add_cors_headers(response: Response) -> Response:
         origin = request.headers.get("Origin", "*")
+        requested_headers = request.headers.get("Access-Control-Request-Headers")
         response.headers["Access-Control-Allow-Origin"] = origin
         response.headers["Access-Control-Allow-Methods"] = "GET,POST,PUT,PATCH,DELETE,OPTIONS"
-        response.headers["Access-Control-Allow-Headers"] = "content-type,authorization"
-        response.headers["Vary"] = "Origin"
+        response.headers["Access-Control-Allow-Headers"] = requested_headers or "content-type,authorization"
+        response.headers["Vary"] = "Origin, Access-Control-Request-Headers"
         return response
 
     @app.route("/", methods=["GET"])
@@ -116,14 +117,18 @@ def create_app() -> Flask:
             raise LookupError(f"Tracked product not found: {tracked_product_id}")
         return Response(status=204)
 
-    @app.route("/tracked-products/<tracked_product_id>/history", methods=["GET"])
+    @app.route("/tracked-products/<tracked_product_id>/history", methods=["GET", "OPTIONS"])
     def tracked_product_history(tracked_product_id: str) -> Response:
+        if request.method == "OPTIONS":
+            return Response(status=204)
         limit = _parse_positive_int(request.args.get("limit"), "limit", default=100, maximum=500)
         history_rows = storage.list_price_history(tracked_product_id, limit=limit)
         return jsonify([row.to_dict() for row in history_rows])
 
-    @app.route("/price-history/minimums", methods=["GET"])
+    @app.route("/price-history/minimums", methods=["GET", "OPTIONS"])
     def price_history_minimums() -> Response:
+        if request.method == "OPTIONS":
+            return Response(status=204)
         product_id = _require_query_string(request.args.get("product_id"), "product_id")
         period = _parse_period(request.args.get("period"))
         start_at = _parse_datetime_query_param(request.args.get("start_at"), "start_at")

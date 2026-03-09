@@ -51,6 +51,12 @@ description: Apply this skill when implementing or modifying code in any reposit
 - Prefer the documentation approach already used by the repository (annotations, decorators, code-first, spec-first, or equivalent).
 - When changing an endpoint contract, update the API documentation in the same change.
 
+## Browser-Facing API Endpoints
+- Treat CORS preflight support as part of every new endpoint contract when the API is called from a browser.
+- Add explicit `OPTIONS` handling for new routes instead of relying on framework-generated defaults.
+- If the client sends `Access-Control-Request-Headers`, echo those values in `Access-Control-Allow-Headers` so browser prefetch/framework headers are allowed.
+- Add or update a test that exercises the endpoint's preflight behavior when introducing a new browser-facing route.
+
 ## Documentation and Operational Consistency
 - Update relevant documentation when behavior or usage changes.
 - Preserve existing logging, metrics, and tracing conventions.

@@ -232,6 +232,26 @@ def test_price_history_minimums_endpoint_groups_by_period(monkeypatch, postgres_
     ]
 
 
+def test_price_history_minimums_preflight_allows_requested_headers(monkeypatch, postgres_database_url: str) -> None:
+    monkeypatch.setenv("DATABASE_URL", postgres_database_url)
+    app = create_app()
+    client = app.test_client()
+
+    response = client.options(
+        "/price-history/minimums",
+        headers={
+            "Origin": "https://app.example.com",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "content-type,next-router-prefetch,next-url,rsc",
+        },
+    )
+
+    assert response.status_code == 204
+    assert response.headers["Access-Control-Allow-Origin"] == "https://app.example.com"
+    assert response.headers["Access-Control-Allow-Methods"] == "GET,POST,PUT,PATCH,DELETE,OPTIONS"
+    assert response.headers["Access-Control-Allow-Headers"] == "content-type,next-router-prefetch,next-url,rsc"
+
+
 def test_price_history_minimums_endpoint_validates_period(monkeypatch, postgres_database_url: str) -> None:
     monkeypatch.setenv("DATABASE_URL", postgres_database_url)
     app = create_app()

@@ -207,6 +207,7 @@ Notes:
 - `week` buckets start on Monday at `00:00:00+00:00`.
 - If `start_at` or `end_at` is sent as a date only, the API expands it to the full UTC day boundary.
 - Empty ranges return `"items": []`.
+- Browser clients may send an `OPTIONS` preflight first; API routes should answer that preflight and reflect any `Access-Control-Request-Headers` values in `Access-Control-Allow-Headers`.
 
 ### `GET /search-runs`
 
