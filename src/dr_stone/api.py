@@ -130,7 +130,10 @@ def create_app() -> Flask:
         if request.method == "OPTIONS":
             return Response(status=204)
         product_id = _require_query_string(request.args.get("product_id"), "product_id")
-        period = _parse_period(request.args.get("period"))
+        period = _parse_period_or_granularity(
+            request.args.get("period"),
+            request.args.get("granularity"),
+        )
         start_at = _parse_datetime_query_param(request.args.get("start_at"), "start_at")
         end_at = _parse_datetime_query_param(request.args.get("end_at"), "end_at", end_of_day=True)
         if start_at > end_at:
@@ -149,10 +152,14 @@ def create_app() -> Flask:
         return jsonify(
             {
                 "product_id": product_id,
+                "product_title": tracked_product.product_title,
+                "granularity": period,
                 "period": period,
                 "start_at": start_at.isoformat(),
                 "end_at": end_at.isoformat(),
-                "items": [row.to_dict() for row in minimum_rows],
+                "items": [
+                    _period_minimum_price_to_api_dict(row, tracked_product.product_title) for row in minimum_rows
+                ],
             }
         )
 
@@ -236,6 +243,13 @@ def _tracked_product_to_api_dict(tracked_product: TrackedProduct) -> dict[str, A
     }
 
 
+def _period_minimum_price_to_api_dict(row: Any, tracked_product_title: str) -> dict[str, Any]:
+    payload = row.to_dict()
+    payload["source_product_title"] = payload["product_title"]
+    payload["product_title"] = tracked_product_title
+    return payload
+
+
 def _parse_positive_int(
     value: object,
     field_name: str,
@@ -258,10 +272,22 @@ def _parse_positive_int(
     return parsed
 
 
-def _parse_period(value: object) -> str:
-    period = _require_query_string(value, "period").lower()
+def _parse_period_or_granularity(period_value: object, granularity_value: object) -> str:
+    period = _coerce_string(period_value)
+    granularity = _coerce_string(granularity_value)
+
+    if period is None and granularity is None:
+        raise ValueError("period or granularity is required")
+    if period is not None and granularity is not None and period.lower() != granularity.lower():
+        raise ValueError("period and granularity must match when both are provided.")
+
+    selected_value = granularity or period
+    if selected_value is None:
+        raise ValueError("period or granularity is required")
+
+    period = selected_value.lower()
     if period not in {"day", "week", "month"}:
-        raise ValueError("period must be one of: day, week, month.")
+        raise ValueError("period/granularity must be one of: day, week, month.")
     return period
 
 

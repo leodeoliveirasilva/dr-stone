@@ -184,6 +184,8 @@ def test_price_history_minimums_endpoint_groups_by_period(monkeypatch, postgres_
     assert day_response.status_code == 200
     assert day_response.get_json() == {
         "product_id": product_id,
+        "product_title": "RX 9070 XT",
+        "granularity": "day",
         "period": "day",
         "start_at": "2026-03-01T00:00:00+00:00",
         "end_at": "2026-03-31T23:59:59.999999+00:00",
@@ -191,7 +193,8 @@ def test_price_history_minimums_endpoint_groups_by_period(monkeypatch, postgres_
             {
                 "period_start": "2026-03-02T00:00:00+00:00",
                 "captured_at": "2026-03-02T15:00:00+00:00",
-                "product_title": "Placa RX 9070 XT 2",
+                "product_title": "RX 9070 XT",
+                "source_product_title": "Placa RX 9070 XT 2",
                 "canonical_url": "https://www.kabum.com.br/produto/2/rx-9070-xt",
                 "price": "5900.00",
                 "currency": "BRL",
@@ -201,7 +204,8 @@ def test_price_history_minimums_endpoint_groups_by_period(monkeypatch, postgres_
             {
                 "period_start": "2026-03-04T00:00:00+00:00",
                 "captured_at": "2026-03-04T12:00:00+00:00",
-                "product_title": "Placa RX 9070 XT 3",
+                "product_title": "RX 9070 XT",
+                "source_product_title": "Placa RX 9070 XT 3",
                 "canonical_url": "https://www.kabum.com.br/produto/3/rx-9070-xt",
                 "price": "5800.00",
                 "currency": "BRL",
@@ -211,7 +215,8 @@ def test_price_history_minimums_endpoint_groups_by_period(monkeypatch, postgres_
             {
                 "period_start": "2026-03-10T00:00:00+00:00",
                 "captured_at": "2026-03-10T09:30:00+00:00",
-                "product_title": "Placa RX 9070 XT 4",
+                "product_title": "RX 9070 XT",
+                "source_product_title": "Placa RX 9070 XT 4",
                 "canonical_url": "https://www.kabum.com.br/produto/4/rx-9070-xt",
                 "price": "5700.00",
                 "currency": "BRL",
@@ -230,6 +235,71 @@ def test_price_history_minimums_endpoint_groups_by_period(monkeypatch, postgres_
         ("2026-03-01T00:00:00+00:00", "5700.00"),
         ("2026-04-01T00:00:00+00:00", "5600.00"),
     ]
+
+
+def test_price_history_minimums_endpoint_accepts_granularity_alias(
+    monkeypatch, postgres_database_url: str
+) -> None:
+    monkeypatch.setenv("DATABASE_URL", postgres_database_url)
+    app = create_app()
+    client = app.test_client()
+
+    create_response = client.post(
+        "/tracked-products",
+        json={"title": "RX 9060 XT", "search_terms": ["RX 9060 XT"]},
+    )
+    product_id = create_response.get_json()["id"]
+
+    storage = PostgresStorage(postgres_database_url, logging.getLogger("test"))
+    search_run_id = storage.create_search_run(
+        tracked_product_id=product_id,
+        source_name="kabum",
+        search_term="RX 9060 XT",
+        search_url="https://www.kabum.com.br/busca/rx-9060-xt",
+    )
+    inserted = storage.persist_search_run_items(
+        search_run_id=search_run_id,
+        tracked_product_id=product_id,
+        items=[
+            SearchResultItem(
+                source="kabum",
+                title="Long scraped RX 9060 XT title",
+                canonical_url="https://www.kabum.com.br/produto/9060/rx-9060-xt",
+                price=Decimal("3200.00"),
+                currency="BRL",
+                availability="in_stock",
+                is_available=True,
+                position=1,
+                metadata={"source_product_key": "9060", "seller_name": "KaBuM!"},
+            )
+        ],
+        captured_at=datetime(2026, 3, 6, 12, 0, tzinfo=UTC),
+    )
+    storage.finish_search_run(
+        search_run_id,
+        status="succeeded",
+        total_results=12,
+        matched_results=inserted,
+        page_count=1,
+        message="lowest_prices_saved",
+    )
+
+    response = client.get(
+        "/price-history/minimums",
+        query_string={
+            "product_id": product_id,
+            "granularity": "week",
+            "start_at": "2026-03-01",
+            "end_at": "2026-03-31",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["granularity"] == "week"
+    assert response.get_json()["period"] == "week"
+    assert response.get_json()["product_title"] == "RX 9060 XT"
+    assert response.get_json()["items"][0]["product_title"] == "RX 9060 XT"
+    assert response.get_json()["items"][0]["source_product_title"] == "Long scraped RX 9060 XT title"
 
 
 def test_price_history_minimums_preflight_allows_requested_headers(monkeypatch, postgres_database_url: str) -> None:
@@ -269,5 +339,5 @@ def test_price_history_minimums_endpoint_validates_period(monkeypatch, postgres_
 
     assert response.status_code == 400
     assert response.get_json() == {
-        "error": "period must be one of: day, week, month."
+        "error": "period/granularity must be one of: day, week, month."
     }
