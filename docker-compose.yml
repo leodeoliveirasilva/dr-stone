@@ -20,10 +20,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    env_file:
-      - .env
     environment:
-      TEST_DATABASE_URL: ${TEST_DATABASE_URL}
+      TEST_DATABASE_URL: ${TEST_DATABASE_URL:-postgresql://dr_stone:dr_stone@postgres:5432/dr_stone_test}
     volumes:
       - .:/app
     command: /opt/dr-stone-venv/bin/python -m pytest

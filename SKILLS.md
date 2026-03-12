@@ -5,8 +5,8 @@ Use Docker Compose for the full local test workflow in this repository.
 ## Prerequisites
 
 - Docker and Docker Compose must be installed.
-- `.env` must exist at the repo root.
-- `.env` must define `TEST_DATABASE_URL` for the Compose network:
+- `.env` is optional at the repo root.
+- If you need to override the default Compose database URL locally, define `TEST_DATABASE_URL` in `.env`:
 
 ```bash
 TEST_DATABASE_URL=postgresql://dr_stone:dr_stone@postgres:5432/dr_stone_test

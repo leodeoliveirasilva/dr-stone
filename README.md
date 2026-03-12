@@ -81,7 +81,7 @@ Run the full Postgres-backed test suite with Docker Compose:
 docker compose run --build --rm tests
 ```
 
-`TEST_DATABASE_URL` is read from `.env`. The default local value is:
+`TEST_DATABASE_URL` defaults to the Compose Postgres service below, and `.env` can override it locally:
 
 ```bash
 TEST_DATABASE_URL=postgresql://dr_stone:dr_stone@postgres:5432/dr_stone_test
