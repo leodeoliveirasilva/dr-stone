@@ -341,3 +341,221 @@ def test_price_history_minimums_endpoint_validates_period(monkeypatch, postgres_
     assert response.get_json() == {
         "error": "period/granularity must be one of: day, week, month."
     }
+
+
+def test_tracked_product_history_endpoint_supports_filters_and_pagination(
+    monkeypatch, postgres_database_url: str
+) -> None:
+    monkeypatch.setenv("DATABASE_URL", postgres_database_url)
+    app = create_app()
+    client = app.test_client()
+
+    create_response = client.post(
+        "/tracked-products",
+        json={"title": "RTX 5070", "search_terms": ["RTX 5070"]},
+    )
+    product_id = create_response.get_json()["id"]
+
+    storage = PostgresStorage(postgres_database_url, logging.getLogger("test"))
+
+    def persist_item(captured_at: datetime, price: str, product_key: str) -> None:
+        search_run_id = storage.create_search_run(
+            tracked_product_id=product_id,
+            source_name="kabum",
+            search_term="RTX 5070",
+            search_url="https://www.kabum.com.br/busca/rtx-5070",
+        )
+        inserted = storage.persist_search_run_items(
+            search_run_id=search_run_id,
+            tracked_product_id=product_id,
+            items=[
+                SearchResultItem(
+                    source="kabum",
+                    title=f"RTX 5070 {product_key}",
+                    canonical_url=f"https://www.kabum.com.br/produto/{product_key}/rtx-5070",
+                    price=Decimal(price),
+                    currency="BRL",
+                    availability="in_stock",
+                    is_available=True,
+                    position=1,
+                    metadata={"source_product_key": product_key, "seller_name": "KaBuM!"},
+                )
+            ],
+            captured_at=captured_at,
+        )
+        storage.finish_search_run(
+            search_run_id,
+            status="succeeded",
+            total_results=6,
+            matched_results=inserted,
+            page_count=1,
+            message="lowest_prices_saved",
+        )
+
+    persist_item(datetime(2026, 2, 20, 12, 0, tzinfo=UTC), "4200.00", "1")
+    persist_item(datetime(2026, 3, 1, 12, 0, tzinfo=UTC), "4100.00", "2")
+    persist_item(datetime(2026, 3, 8, 12, 0, tzinfo=UTC), "4050.00", "3")
+
+    response = client.get(
+        f"/tracked-products/{product_id}/history",
+        query_string={
+            "limit": 1,
+            "offset": 0,
+            "start_at": "2026-03-01",
+            "end_at": "2026-03-12",
+        },
+    )
+    second_page = client.get(
+        f"/tracked-products/{product_id}/history",
+        query_string={
+            "limit": 1,
+            "offset": 1,
+            "start_at": "2026-03-01",
+            "end_at": "2026-03-12",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["product_id"] == product_id
+    assert response.get_json()["product_title"] == "RTX 5070"
+    assert response.get_json()["has_more"] is True
+    assert response.get_json()["next_offset"] == 1
+    assert response.get_json()["start_at"] == "2026-03-01T00:00:00+00:00"
+    assert response.get_json()["end_at"] == "2026-03-12T23:59:59.999999+00:00"
+    assert [item["captured_at"] for item in response.get_json()["items"]] == [
+        "2026-03-08T12:00:00+00:00"
+    ]
+
+    assert second_page.status_code == 200
+    assert second_page.get_json()["has_more"] is False
+    assert second_page.get_json()["next_offset"] is None
+    assert [item["captured_at"] for item in second_page.get_json()["items"]] == [
+        "2026-03-01T12:00:00+00:00"
+    ]
+
+
+def test_tracked_product_history_endpoint_validates_offset(monkeypatch, postgres_database_url: str) -> None:
+    monkeypatch.setenv("DATABASE_URL", postgres_database_url)
+    app = create_app()
+    client = app.test_client()
+
+    create_response = client.post(
+        "/tracked-products",
+        json={"title": "RTX 5070", "search_terms": ["RTX 5070"]},
+    )
+    product_id = create_response.get_json()["id"]
+
+    response = client.get(
+        f"/tracked-products/{product_id}/history",
+        query_string={"offset": -1},
+    )
+
+    assert response.status_code == 400
+    assert response.get_json() == {"error": "offset must be a non-negative integer."}
+
+
+def test_tracked_product_history_endpoint_validates_date_window(monkeypatch, postgres_database_url: str) -> None:
+    monkeypatch.setenv("DATABASE_URL", postgres_database_url)
+    app = create_app()
+    client = app.test_client()
+
+    create_response = client.post(
+        "/tracked-products",
+        json={"title": "RTX 5070", "search_terms": ["RTX 5070"]},
+    )
+    product_id = create_response.get_json()["id"]
+
+    response = client.get(
+        f"/tracked-products/{product_id}/history",
+        query_string={
+            "start_at": "2026-03-12",
+            "end_at": "2026-03-01",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.get_json() == {"error": "start_at must be less than or equal to end_at."}
+
+
+def test_tracked_product_history_endpoint_returns_404_for_unknown_product(
+    monkeypatch, postgres_database_url: str
+) -> None:
+    monkeypatch.setenv("DATABASE_URL", postgres_database_url)
+    app = create_app()
+    client = app.test_client()
+
+    response = client.get("/tracked-products/missing-product/history")
+
+    assert response.status_code == 404
+    assert response.get_json() == {"error": "Tracked product not found: missing-product"}
+
+
+def test_tracked_product_history_endpoint_paginates_deterministically_for_ties(
+    monkeypatch, postgres_database_url: str
+) -> None:
+    monkeypatch.setenv("DATABASE_URL", postgres_database_url)
+    app = create_app()
+    client = app.test_client()
+
+    create_response = client.post(
+        "/tracked-products",
+        json={"title": "RTX 5070", "search_terms": ["RTX 5070"]},
+    )
+    product_id = create_response.get_json()["id"]
+
+    storage = PostgresStorage(postgres_database_url, logging.getLogger("test"))
+
+    def persist_item(product_key: str) -> None:
+        search_run_id = storage.create_search_run(
+            tracked_product_id=product_id,
+            source_name="kabum",
+            search_term="RTX 5070",
+            search_url="https://www.kabum.com.br/busca/rtx-5070",
+        )
+        inserted = storage.persist_search_run_items(
+            search_run_id=search_run_id,
+            tracked_product_id=product_id,
+            items=[
+                SearchResultItem(
+                    source="kabum",
+                    title=f"RTX 5070 {product_key}",
+                    canonical_url=f"https://www.kabum.com.br/produto/{product_key}/rtx-5070",
+                    price=Decimal("4050.00"),
+                    currency="BRL",
+                    availability="in_stock",
+                    is_available=True,
+                    position=1,
+                    metadata={"source_product_key": product_key, "seller_name": "KaBuM!"},
+                )
+            ],
+            captured_at=datetime(2026, 3, 8, 12, 0, tzinfo=UTC),
+        )
+        storage.finish_search_run(
+            search_run_id,
+            status="succeeded",
+            total_results=6,
+            matched_results=inserted,
+            page_count=1,
+            message="lowest_prices_saved",
+        )
+
+    persist_item("2")
+    persist_item("1")
+
+    first_page = client.get(
+        f"/tracked-products/{product_id}/history",
+        query_string={"limit": 1, "offset": 0},
+    )
+    second_page = client.get(
+        f"/tracked-products/{product_id}/history",
+        query_string={"limit": 1, "offset": 1},
+    )
+
+    assert first_page.status_code == 200
+    assert second_page.status_code == 200
+    assert [item["canonical_url"] for item in first_page.get_json()["items"]] == [
+        "https://www.kabum.com.br/produto/1/rtx-5070"
+    ]
+    assert [item["canonical_url"] for item in second_page.get_json()["items"]] == [
+        "https://www.kabum.com.br/produto/2/rtx-5070"
+    ]

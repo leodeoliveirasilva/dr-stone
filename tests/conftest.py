@@ -10,7 +10,7 @@ import pytest
 from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
-from dr_stone.storage import PostgresStorage
+from dr_stone.storage import PostgresStorage, SQLiteStorage
 
 
 @pytest.fixture
@@ -53,6 +53,13 @@ def postgres_database_url() -> str:
 @pytest.fixture
 def postgres_storage(postgres_database_url: str, migrations_dir: Path) -> PostgresStorage:
     storage = PostgresStorage(postgres_database_url, logging.getLogger("test"))
+    storage.apply_migrations(migrations_dir)
+    return storage
+
+
+@pytest.fixture
+def sqlite_storage(tmp_path: Path, migrations_dir: Path) -> SQLiteStorage:
+    storage = SQLiteStorage(tmp_path / "dr_stone.sqlite3", logging.getLogger("test"))
     storage.apply_migrations(migrations_dir)
     return storage
 

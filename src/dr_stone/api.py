@@ -121,9 +121,39 @@ def create_app() -> Flask:
     def tracked_product_history(tracked_product_id: str) -> Response:
         if request.method == "OPTIONS":
             return Response(status=204)
+        tracked_product = storage.get_tracked_product(tracked_product_id)
+        if tracked_product is None:
+            raise LookupError(f"Tracked product not found: {tracked_product_id}")
+
         limit = _parse_positive_int(request.args.get("limit"), "limit", default=100, maximum=500)
-        history_rows = storage.list_price_history(tracked_product_id, limit=limit)
-        return jsonify([row.to_dict() for row in history_rows])
+        offset = _parse_non_negative_int(request.args.get("offset"), "offset", default=0)
+        start_at = _parse_optional_datetime_query_param(request.args.get("start_at"), "start_at")
+        end_at = _parse_optional_datetime_query_param(request.args.get("end_at"), "end_at", end_of_day=True)
+        if start_at is not None and end_at is not None and start_at > end_at:
+            raise ValueError("start_at must be less than or equal to end_at.")
+
+        history_rows = storage.list_price_history(
+            tracked_product_id,
+            limit=limit + 1,
+            offset=offset,
+            start_at=start_at,
+            end_at=end_at,
+        )
+        has_more = len(history_rows) > limit
+        items = history_rows[:limit]
+        return jsonify(
+            {
+                "product_id": tracked_product_id,
+                "product_title": tracked_product.product_title,
+                "limit": limit,
+                "offset": offset,
+                "has_more": has_more,
+                "next_offset": offset + len(items) if has_more else None,
+                "start_at": start_at.isoformat() if start_at is not None else None,
+                "end_at": end_at.isoformat() if end_at is not None else None,
+                "items": [row.to_dict() for row in items],
+            }
+        )
 
     @app.route("/price-history/minimums", methods=["GET", "OPTIONS"])
     def price_history_minimums() -> Response:
@@ -272,6 +302,18 @@ def _parse_positive_int(
     return parsed
 
 
+def _parse_non_negative_int(value: object, field_name: str, *, default: int = 0) -> int:
+    if value in {None, ""}:
+        return default
+    try:
+        parsed = int(str(value))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field_name} must be a non-negative integer.") from exc
+    if parsed < 0:
+        raise ValueError(f"{field_name} must be a non-negative integer.")
+    return parsed
+
+
 def _parse_period_or_granularity(period_value: object, granularity_value: object) -> str:
     period = _coerce_string(period_value)
     granularity = _coerce_string(granularity_value)
@@ -313,6 +355,17 @@ def _parse_datetime_query_param(
     if parsed_datetime.tzinfo is None:
         return parsed_datetime.replace(tzinfo=UTC)
     return parsed_datetime.astimezone(UTC)
+
+
+def _parse_optional_datetime_query_param(
+    value: object,
+    field_name: str,
+    *,
+    end_of_day: bool = False,
+) -> datetime | None:
+    if value in {None, ""}:
+        return None
+    return _parse_datetime_query_param(value, field_name, end_of_day=end_of_day)
 
 
 def _validate_date(value: str) -> None:

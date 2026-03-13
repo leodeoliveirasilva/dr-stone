@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 from dr_stone.models import ScrapeFailure, SearchResultItem
-from dr_stone.storage import PostgresStorage
+from dr_stone.storage import PostgresStorage, SQLiteStorage
 
 
 def test_apply_migrations_creates_expected_tables(
@@ -248,4 +248,191 @@ def test_list_period_minimum_prices_groups_by_day_week_and_month(postgres_storag
     assert [(row.period_start.isoformat(), row.price) for row in month_rows] == [
         ("2026-03-01T00:00:00+00:00", Decimal("5700.00")),
         ("2026-04-01T00:00:00+00:00", Decimal("5600.00")),
+    ]
+
+
+def test_list_price_history_supports_date_filters_and_offset(postgres_storage: PostgresStorage) -> None:
+    tracked_product = postgres_storage.create_tracked_product(
+        product_title="RTX 5070",
+        search_terms=["RTX 5070"],
+    )
+
+    def persist_item(captured_at: datetime, price: str, product_key: str) -> None:
+        search_run_id = postgres_storage.create_search_run(
+            tracked_product_id=tracked_product.id,
+            source_name="kabum",
+            search_term="RTX 5070",
+            search_url="https://www.kabum.com.br/busca/rtx-5070",
+        )
+        inserted = postgres_storage.persist_search_run_items(
+            search_run_id=search_run_id,
+            tracked_product_id=tracked_product.id,
+            items=[
+                SearchResultItem(
+                    source="kabum",
+                    title=f"RTX 5070 {product_key}",
+                    canonical_url=f"https://www.kabum.com.br/produto/{product_key}/rtx-5070",
+                    price=Decimal(price),
+                    currency="BRL",
+                    availability="in_stock",
+                    is_available=True,
+                    position=1,
+                    metadata={"source_product_key": product_key, "seller_name": "KaBuM!"},
+                )
+            ],
+            captured_at=captured_at,
+        )
+        postgres_storage.finish_search_run(
+            search_run_id,
+            status="succeeded",
+            total_results=8,
+            matched_results=inserted,
+            page_count=1,
+            message="lowest_prices_saved",
+        )
+
+    persist_item(datetime(2026, 3, 1, 8, 0, tzinfo=UTC), "4100.00", "1")
+    persist_item(datetime(2026, 3, 5, 8, 0, tzinfo=UTC), "4050.00", "2")
+    persist_item(datetime(2026, 3, 9, 8, 0, tzinfo=UTC), "4000.00", "3")
+
+    filtered_rows = postgres_storage.list_price_history(
+        tracked_product.id,
+        limit=2,
+        offset=0,
+        start_at=datetime(2026, 3, 2, 0, 0, tzinfo=UTC),
+        end_at=datetime(2026, 3, 10, 0, 0, tzinfo=UTC),
+    )
+    paged_rows = postgres_storage.list_price_history(
+        tracked_product.id,
+        limit=1,
+        offset=1,
+        start_at=datetime(2026, 3, 2, 0, 0, tzinfo=UTC),
+        end_at=datetime(2026, 3, 10, 0, 0, tzinfo=UTC),
+    )
+
+    assert [row.captured_at.isoformat() for row in filtered_rows] == [
+        "2026-03-09T08:00:00+00:00",
+        "2026-03-05T08:00:00+00:00",
+    ]
+    assert [row.captured_at.isoformat() for row in paged_rows] == [
+        "2026-03-05T08:00:00+00:00"
+    ]
+
+
+def test_list_price_history_orders_ties_deterministically(postgres_storage: PostgresStorage) -> None:
+    tracked_product = postgres_storage.create_tracked_product(
+        product_title="RTX 5070",
+        search_terms=["RTX 5070"],
+    )
+
+    def persist_item(product_key: str) -> None:
+        search_run_id = postgres_storage.create_search_run(
+            tracked_product_id=tracked_product.id,
+            source_name="kabum",
+            search_term="RTX 5070",
+            search_url="https://www.kabum.com.br/busca/rtx-5070",
+        )
+        inserted = postgres_storage.persist_search_run_items(
+            search_run_id=search_run_id,
+            tracked_product_id=tracked_product.id,
+            items=[
+                SearchResultItem(
+                    source="kabum",
+                    title=f"RTX 5070 {product_key}",
+                    canonical_url=f"https://www.kabum.com.br/produto/{product_key}/rtx-5070",
+                    price=Decimal("4050.00"),
+                    currency="BRL",
+                    availability="in_stock",
+                    is_available=True,
+                    position=1,
+                    metadata={"source_product_key": product_key, "seller_name": "KaBuM!"},
+                )
+            ],
+            captured_at=datetime(2026, 3, 5, 8, 0, tzinfo=UTC),
+        )
+        postgres_storage.finish_search_run(
+            search_run_id,
+            status="succeeded",
+            total_results=8,
+            matched_results=inserted,
+            page_count=1,
+            message="lowest_prices_saved",
+        )
+
+    persist_item("2")
+    persist_item("1")
+
+    rows = postgres_storage.list_price_history(tracked_product.id, limit=2)
+
+    assert [row.canonical_url for row in rows] == [
+        "https://www.kabum.com.br/produto/1/rtx-5070",
+        "https://www.kabum.com.br/produto/2/rtx-5070",
+    ]
+
+
+def test_sqlite_list_price_history_supports_date_filters_and_offset(sqlite_storage: SQLiteStorage) -> None:
+    tracked_product = sqlite_storage.create_tracked_product(
+        product_title="RTX 5070",
+        search_terms=["RTX 5070"],
+    )
+
+    def persist_item(captured_at: datetime, price: str, product_key: str) -> None:
+        search_run_id = sqlite_storage.create_search_run(
+            tracked_product_id=tracked_product.id,
+            source_name="kabum",
+            search_term="RTX 5070",
+            search_url="https://www.kabum.com.br/busca/rtx-5070",
+        )
+        inserted = sqlite_storage.persist_search_run_items(
+            search_run_id=search_run_id,
+            tracked_product_id=tracked_product.id,
+            items=[
+                SearchResultItem(
+                    source="kabum",
+                    title=f"RTX 5070 {product_key}",
+                    canonical_url=f"https://www.kabum.com.br/produto/{product_key}/rtx-5070",
+                    price=Decimal(price),
+                    currency="BRL",
+                    availability="in_stock",
+                    is_available=True,
+                    position=1,
+                    metadata={"source_product_key": product_key, "seller_name": "KaBuM!"},
+                )
+            ],
+            captured_at=captured_at,
+        )
+        sqlite_storage.finish_search_run(
+            search_run_id,
+            status="succeeded",
+            total_results=8,
+            matched_results=inserted,
+            page_count=1,
+            message="lowest_prices_saved",
+        )
+
+    persist_item(datetime(2026, 3, 1, 8, 0, tzinfo=UTC), "4100.00", "1")
+    persist_item(datetime(2026, 3, 5, 8, 0, tzinfo=UTC), "4050.00", "2")
+    persist_item(datetime(2026, 3, 9, 8, 0, tzinfo=UTC), "4000.00", "3")
+
+    filtered_rows = sqlite_storage.list_price_history(
+        tracked_product.id,
+        limit=2,
+        offset=0,
+        start_at=datetime(2026, 3, 2, 0, 0, tzinfo=UTC),
+        end_at=datetime(2026, 3, 10, 0, 0, tzinfo=UTC),
+    )
+    paged_rows = sqlite_storage.list_price_history(
+        tracked_product.id,
+        limit=1,
+        offset=1,
+        start_at=datetime(2026, 3, 2, 0, 0, tzinfo=UTC),
+        end_at=datetime(2026, 3, 10, 0, 0, tzinfo=UTC),
+    )
+
+    assert [row.captured_at.isoformat() for row in filtered_rows] == [
+        "2026-03-09T08:00:00+00:00",
+        "2026-03-05T08:00:00+00:00",
+    ]
+    assert [row.captured_at.isoformat() for row in paged_rows] == [
+        "2026-03-05T08:00:00+00:00"
     ]

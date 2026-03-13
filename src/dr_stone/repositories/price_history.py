@@ -17,9 +17,11 @@ class SQLitePriceHistoryRepository:
         tracked_product_id: str,
         *,
         limit: int = 100,
+        offset: int = 0,
+        start_at: datetime | None = None,
+        end_at: datetime | None = None,
     ) -> list[SearchHistoryEntry]:
-        rows = connection.execute(
-            """
+        query = """
             SELECT
                 captured_at,
                 product_title,
@@ -30,11 +32,21 @@ class SQLitePriceHistoryRepository:
                 search_run_id
             FROM search_run_items
             WHERE tracked_product_id = ?
-            ORDER BY captured_at DESC, CAST(price_value AS REAL) ASC
+        """
+        params: list[object] = [tracked_product_id]
+        if start_at is not None:
+            query += " AND captured_at >= ?"
+            params.append(start_at.isoformat())
+        if end_at is not None:
+            query += " AND captured_at <= ?"
+            params.append(end_at.isoformat())
+        query += """
+            ORDER BY captured_at DESC, CAST(price_value AS REAL) ASC, canonical_url ASC, search_run_id ASC
             LIMIT ?
-            """,
-            (tracked_product_id, limit),
-        ).fetchall()
+            OFFSET ?
+        """
+        params.extend([limit, offset])
+        rows = connection.execute(query, params).fetchall()
         return [_row_to_history_entry(row) for row in rows]
 
     def list_period_minimums(
@@ -105,9 +117,11 @@ class PostgresPriceHistoryRepository:
         tracked_product_id: str,
         *,
         limit: int = 100,
+        offset: int = 0,
+        start_at: datetime | None = None,
+        end_at: datetime | None = None,
     ) -> list[SearchHistoryEntry]:
-        rows = connection.execute(
-            """
+        query = """
             SELECT
                 captured_at,
                 product_title,
@@ -118,11 +132,21 @@ class PostgresPriceHistoryRepository:
                 search_run_id
             FROM search_run_items
             WHERE tracked_product_id = %s
-            ORDER BY captured_at DESC, CAST(price_value AS NUMERIC) ASC
+        """
+        params: list[object] = [tracked_product_id]
+        if start_at is not None:
+            query += " AND captured_at >= %s"
+            params.append(start_at.isoformat())
+        if end_at is not None:
+            query += " AND captured_at <= %s"
+            params.append(end_at.isoformat())
+        query += """
+            ORDER BY captured_at DESC, CAST(price_value AS NUMERIC) ASC, canonical_url ASC, search_run_id ASC
             LIMIT %s
-            """,
-            (tracked_product_id, limit),
-        ).fetchall()
+            OFFSET %s
+        """
+        params.extend([limit, offset])
+        rows = connection.execute(query, params).fetchall()
         return [_row_to_history_entry(row) for row in rows]
 
     def list_period_minimums(

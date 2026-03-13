@@ -286,12 +286,18 @@ class SQLiteStorage:
         tracked_product_id: str,
         *,
         limit: int = 100,
+        offset: int = 0,
+        start_at: datetime | None = None,
+        end_at: datetime | None = None,
     ) -> list[SearchHistoryEntry]:
         with self.connect() as connection:
             return self.price_history_repository.list_history(
                 connection,
                 tracked_product_id,
                 limit=limit,
+                offset=offset,
+                start_at=start_at,
+                end_at=end_at,
             )
 
     def list_period_minimum_prices(
@@ -633,12 +639,18 @@ class PostgresStorage:
         tracked_product_id: str,
         *,
         limit: int = 100,
+        offset: int = 0,
+        start_at: datetime | None = None,
+        end_at: datetime | None = None,
     ) -> list[SearchHistoryEntry]:
         with self.connect() as connection:
             return self.price_history_repository.list_history(
                 connection,
                 tracked_product_id,
                 limit=limit,
+                offset=offset,
+                start_at=start_at,
+                end_at=end_at,
             )
 
     def list_period_minimum_prices(
