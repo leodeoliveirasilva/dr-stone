@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import swagger from "@fastify/swagger";
@@ -13,7 +14,21 @@ import { z } from "zod";
 import type { ApiSettings } from "./env.js";
 import { buildRuntime } from "./services/runtime.js";
 
-const OPENAPI_SPEC_PATH = fileURLToPath(new URL("./openapi.json", import.meta.url));
+const OPENAPI_SPEC_PATH = resolveOpenApiSpecPath();
+
+function resolveOpenApiSpecPath(): string {
+  const bundledSpecPath = fileURLToPath(new URL("./openapi.json", import.meta.url));
+  if (existsSync(bundledSpecPath)) {
+    return bundledSpecPath;
+  }
+
+  const sourceSpecPath = fileURLToPath(new URL("../src/openapi.json", import.meta.url));
+  if (existsSync(sourceSpecPath)) {
+    return sourceSpecPath;
+  }
+
+  throw new Error(`${bundledSpecPath} does not exist`);
+}
 
 const trackedProductSchema = z.object({
   title: z.string().trim().min(1),
