@@ -1,17 +1,3 @@
-# Python environments and dependencies
-.venv/
-.deps/
-
-# Python cache and test artifacts
-__pycache__/
-.pytest_cache/
-.ruff_cache/
-.mypy_cache/
-.coverage
-coverage.xml
-htmlcov/
-*.py[cod]
-
 # Local environment files
 .env
 .env.local
@@ -20,7 +6,6 @@ htmlcov/
 # Build artifacts
 build/
 dist/
-*.egg-info/
 *.db
 *.sqlite
 *.sqlite3
@@ -32,6 +17,8 @@ node_modules/
 .output/
 .nitro/
 .cache/
+.turbo/
+coverage/
 
 # Cloudflare and deployment artifacts
 .wrangler/

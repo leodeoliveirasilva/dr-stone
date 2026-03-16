@@ -6,6 +6,11 @@
       "sourceType": "github",
       "computedHash": "7a28cb13b9fa427ae39c943ceb25d81f8135f848e1a1d434dc86a75926f51035"
     },
+    "typescript-expert": {
+      "source": "sickn33/antigravity-awesome-skills",
+      "sourceType": "github",
+      "computedHash": "f0f625132cf53116cb27725926e2c99f142861b9063d459938dd85fbf8e2bf61"
+    },
     "use-railway": {
       "source": "railwayapp/railway-skills",
       "sourceType": "github",

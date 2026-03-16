@@ -1,16 +1,22 @@
-FROM python:3.12-slim
+FROM node:24.14.0-slim
 
 WORKDIR /app
 
-ENV TEST_VENV=/opt/dr-stone-venv
-ENV PATH="${TEST_VENV}/bin:${PATH}"
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
 
-COPY pyproject.toml README.md ./
-COPY src ./src
-COPY tests ./tests
-COPY migrations ./migrations
+RUN corepack enable
 
-RUN python3 -m pip install --no-cache-dir uv \
-    && python3 -m uv python install 3.12 \
-    && python3 -m uv venv --seed --python 3.12 "${TEST_VENV}" \
-    && "${TEST_VENV}/bin/python" -m pip install --no-cache-dir -e '.[dev]'
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json tsconfig.json tsconfig.base.json eslint.config.mjs vitest.config.ts ./
+COPY dr-stone-api/package.json dr-stone-api/package.json
+COPY dr-stone-database/package.json dr-stone-database/package.json
+COPY dr-stone-scrapper/package.json dr-stone-scrapper/package.json
+
+RUN pnpm install --frozen-lockfile
+
+COPY dr-stone-api dr-stone-api
+COPY dr-stone-database dr-stone-database
+COPY dr-stone-scrapper dr-stone-scrapper
+COPY tests tests
+
+RUN find /app -name '*.tsbuildinfo' -delete

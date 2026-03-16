@@ -1,205 +1,478 @@
-# Dr. Stone Backend Project Plan
+# Dr. Stone TypeScript Service Migration Plan
+
+## Goal
+
+Migrate the current single-package Python application into a TypeScript monorepo with:
+
+- `dr-stone-api/` for the HTTP API
+- `dr-stone-scrapper/` for the scraping worker
+- `dr-stone-database/` as the shared database package for migrations, schema, and repositories
+
+The target state keeps only two deployable services, both in TypeScript, while the database layer remains reusable from a separate path.
+
+## Current State Summary
+
+The current repository already has two runtime responsibilities, but they are still coupled inside one Python package:
+
+- API entrypoint: `src/dr_stone/api.py`
+- Worker entrypoint: `src/dr_stone/worker.py`
+- Shared storage and migrations bootstrap: `src/dr_stone/storage.py`, `src/dr_stone/runtime.py`, `migrations/`
+- Source adapter pattern exists today in `src/dr_stone/scrapers/`
+- Railway deploy already targets two services from one workflow:
+  - `dr-stone-api`
+  - `dr-stone-worker`
+
+That means the migration should not start from zero. The correct approach is to preserve the current behavior, split ownership by service, and only then retire the Python code.
+
+## Recommended Repository Structure
+
+Keep the two service paths exactly as requested and add one shared database path:
+
+```text
+/
+  package.json
+  pnpm-workspace.yaml
+  turbo.json
+  tsconfig.base.json
+  .github/workflows/deploy.yml
+
+  dr-stone-api/
+    package.json
+    tsconfig.json
+    src/
+      app.ts
+      routes/
+      controllers/
+      services/
+      env.ts
+    Dockerfile
+
+  dr-stone-scrapper/
+    package.json
+    tsconfig.json
+    src/
+      worker.ts
+      sources/
+        base/
+        kabum/
+        amazon/
+      services/
+      http/
+      browser/
+      normalizers/
+      env.ts
+    Dockerfile
 
-This repository now contains only the backend/API and scraping pipeline.
+  dr-stone-database/
+    package.json
+    tsconfig.json
+    src/
+      client/
+      schema/
+      repositories/
+      queries/
+      migrate.ts
+      seed.ts
+    migrations/
+
+  tests/
+    contract/
+    integration/
+```
+
+Notes:
+
+- Keep the folder name `dr-stone-scrapper/` to match the requested structure.
+- Do not introduce more shared packages in the first migration unless there is a proven need.
+- Move the current `migrations/` directory under `dr-stone-database/migrations/`.
+
+## Stack Recommendation
+
+Use a simple TypeScript monorepo instead of separate repositories.
+
+- Workspace manager: `pnpm`
+- Task orchestration: `turbo`
+- Runtime: `Node.js 22`
+- API framework: `Fastify`
+- Validation: `zod`
+- Logging: `pino`
+- Database access: `pg` + `Kysely`
+- Tests: `Vitest`
+- Browser scraping for Amazon: `Playwright`
+- HTTP-first scraping for KaBuM and similar sources: `undici` + `cheerio`
 
-Frontend specification and frontend implementation were moved to:
-`../dr-stone-frontend`
+Why this stack:
 
-## Stack Decision
+- `pnpm` + `turbo` is enough for a small monorepo with 3 workspaces.
+- `Fastify` is a clean replacement for the current Flask API.
+- `Kysely` gives a typed database layer that both services can reuse without turning the repo into ORM-heavy codegen.
+- The worker needs both HTTP-first and browser-based scraping, so the scraper design must support both strategies behind the same interface.
 
-### Recommended language
+## Service Boundaries
 
-**Python** is the best language for this project.
+### `dr-stone-api/`
 
-Why:
+Owns:
 
-- mature ecosystem for scraping, parsing, automation, and data processing
-- strong libraries for extraction, normalization, and persistence
-- good fit for data quality checks and history analysis
+- public HTTP endpoints
+- request validation
+- response shaping
+- health and readiness endpoints
+- application services for tracked products and price history
 
-### Recommended scraping approach
+Does not own:
 
-For the initial version on **Railway**, use **HTTP-first extraction in Python**.
+- scraping source implementations
+- worker scheduling loop
+- migration files
 
-Why:
+### `dr-stone-scrapper/`
 
-- free-tier browser time is limited
-- many product pages can still be scraped via HTML or embedded JSON
-- HTTP-first scraping is cheaper and easier to schedule
+Owns:
 
-### Browser rendering strategy
+- scheduled collection loop
+- source adapter registry
+- source-specific scraping logic
+- result normalization and filtering
+- scrape failure capture
 
-Use browser rendering only when a source cannot be scraped reliably with regular HTTP requests.
+Does not own:
 
-### Initial technical direction
+- public CRUD HTTP API
+- migration definitions
 
-- Language: `Python 3.12+`
-- Scraping engine: `httpx` + parser first
-- HTML parsing: `BeautifulSoup` or `lxml`
-- API/backend: `Flask` served with `gunicorn`
-- Database: `Postgres` on Railway
-- Scheduling: internal or external cron trigger hitting the API
-- Queueing: optional future addition if needed later
+### `dr-stone-database/`
 
-### Railway deployment target
+Owns:
 
-The deployment target for this backend is **Railway**.
+- database connection factory
+- typed schema
+- repositories used by both services
+- migration files and migration runner
+- transaction helpers
 
-Preferred backend architecture:
+Does not own:
 
-- run the API in a Dockerized Python service on Railway
-- use `Postgres` as the primary database
-- keep browser rendering optional and constrained
+- HTTP handlers
+- source scraping logic
 
-### Railway constraints
+## Code Mapping From Python To TypeScript
 
-Important limits to design around:
+Map the current Python modules into the new structure instead of redesigning the domain.
 
-- service memory and CPU limits on the selected Railway plan
-- Postgres storage growth and connection limits
-- scraper request volume and remote site rate limits
+| Current Python module | Target TypeScript location |
+|---|---|
+| `src/dr_stone/api.py` | `dr-stone-api/src/routes/*`, `dr-stone-api/src/controllers/*` |
+| `src/dr_stone/worker.py` | `dr-stone-scrapper/src/worker.ts` |
+| `src/dr_stone/services/search_collection.py` | `dr-stone-scrapper/src/services/search-collection-service.ts` |
+| `src/dr_stone/storage.py` | `dr-stone-database/src/repositories/*` |
+| `src/dr_stone/repositories/price_history.py` | `dr-stone-database/src/repositories/price-history-repository.ts` |
+| `src/dr_stone/config.py` | `dr-stone-api/src/env.ts`, `dr-stone-scrapper/src/env.ts` |
+| `src/dr_stone/scrapers/kabum_search.py` | `dr-stone-scrapper/src/sources/kabum/kabum-source.ts` |
+| `src/dr_stone/http.py`, `src/dr_stone/parsing.py` | `dr-stone-scrapper/src/http/*` |
+| `src/dr_stone/normalizers.py`, `src/dr_stone/matching.py` | `dr-stone-scrapper/src/normalizers/*`, `dr-stone-scrapper/src/services/*` |
 
-Because of these limits, the first version should optimize for:
+## Scraper Architecture
 
-- low scraping frequency
-- a small number of monitored products
-- selective scraping only for tracked products
+The worker should preserve the current source-adapter model, but make the execution strategy explicit.
 
-## Product Goal
+Recommended interface:
 
-Build a backend platform that:
+```ts
+export interface SearchSource {
+  readonly sourceName: string;
+  readonly strategy: "http" | "browser";
+  buildSearchUrl(query: string): string;
+  search(input: SearchInput, context: SourceContext): Promise<SearchRunResult>;
+}
+```
 
-- stores tracked products
-- scrapes source listings
-- extracts current prices and links
-- keeps historical snapshots of price changes
-- serves API responses for frontend consumption
+Recommended implementation rules:
 
-## Phase 1: Foundation
+- KaBuM stays `http` strategy first.
+- Amazon starts as `browser` strategy using Playwright.
+- Future sources must implement the same normalized `SearchRunResult` contract.
+- Matching, selection of the lowest 4 prices, and persistence stay outside the source adapter.
 
-Goal: create a reliable base before scaling source coverage.
+This keeps the source logic reusable without forcing every source into the same transport.
 
-Tasks:
+## Database Package Design
 
-- define backend project structure
-- create the Railway-compatible backend service
-- configure Postgres
-- create schema setup
-- define core database schema
+`dr-stone-database/` should expose:
 
-Deliverables:
+- `createDb(databaseUrl)`
+- `runMigrations()`
+- `TrackedProductsRepository`
+- `SearchRunsRepository`
+- `PriceHistoryRepository`
+- `ScrapeFailuresRepository`
 
-- runnable backend skeleton
-- database connected
-- first schema created
-- health check endpoint
+Recommended rules:
 
-## Phase 2: Data Model
+- Keep migrations in one place only: `dr-stone-database/migrations/`
+- Both services import repository classes from `dr-stone-database`
+- The API service and worker must not keep their own SQL copies
+- Preserve the current schema shape first, then refactor schema only after parity is reached
 
-Goal: design minimum entities required for tracking products and prices.
+## API Parity Requirements
 
-Initial entities:
+The first TypeScript API version should preserve the current public contract from `docs/api.md`:
 
-- `tracked_products`
-- `search_runs`
-- `search_run_items`
-- `scrape_failures`
+- `GET /`
+- `GET /health`
+- `GET /search-runs`
+- `GET/POST /tracked-products`
+- `GET/PUT/PATCH/DELETE /tracked-products/:id`
+- `POST /tracked-products/:id?action=collect`
+- `POST /collect-due`
+- `GET /tracked-products/:id/history`
+- `GET /price-history/minimums`
 
-Deliverables:
+Do not redesign endpoint names during migration. The objective is language and service separation, not API churn.
 
-- normalized schema
-- Postgres migration files
-- clear historical record rules
+## Deployment Model
 
-## Phase 3: Scraping Core
+The current Railway setup already deploys two services. Keep that model and change only the source paths and build commands.
 
-Goal: implement the first working scraping flow.
+Target Railway service mapping:
 
-Tasks:
+- Railway service `dr-stone-api` -> repo path `dr-stone-api/`
+- Railway service `dr-stone-scrapper` -> repo path `dr-stone-scrapper/`
 
-- create fetch-and-parse scraping service
-- implement a scraper interface for sources
-- extract title, URL, price, currency, and availability
-- persist historical snapshots
-- log failures with enough context for debugging
+Operational recommendation:
 
-Deliverables:
+- keep one shared Railway Postgres instance
+- point both services to the same `DATABASE_URL`
+- run migrations from `dr-stone-database`
+- deploy API before worker when schema changes are possible
 
-- one end-to-end scraping pipeline
-- one supported source/store
-- stored price history in Postgres
+## GitHub Actions Plan
 
-## Phase 4: Scheduling and Automation
+The deploy workflow should stop behaving like a single-root Python deployment and become a monorepo pipeline that always deploys both TypeScript services after validation.
 
-Goal: make collection continuous and safe.
+### Target workflow shape
 
-Tasks:
+1. `validate`
+2. `deploy-database` or `migrate-schema`
+3. `deploy-api`
+4. `smoke-api`
+5. `deploy-scrapper`
 
-- schedule recurring scraping jobs
-- define frequency per tracked product
-- prevent duplicate runs
-- retry transient failures
-- track run duration and status
+### Validation job
 
-Deliverables:
+Run on pushes to `master` and pull requests:
 
-- scheduled scraping execution
-- job monitoring data
-- retry policy
+- checkout repo
+- setup Node.js 22
+- setup `pnpm`
+- install workspace dependencies
+- run `pnpm lint`
+- run `pnpm typecheck`
+- run `pnpm test`
 
-## Phase 5: API Layer
+### Migration job
 
-Goal: expose data for frontend and analytics use cases.
+Recommended behavior:
 
-Tasks:
+- run migrations from `dr-stone-database`
+- execute once per deploy before the service deploys
+- fail the pipeline if migration fails
 
-- create endpoints for tracked products CRUD
-- expose search run history
-- expose product history queries
-- define response contracts with predictable schemas
+Implementation note:
 
-Deliverables:
+- if Railway service startup is the preferred place for migrations, keep the workflow step as a smoke check instead
+- if migrations are run from GitHub Actions, add a dedicated production database secret for the migration command
 
-- stable backend API
-- frontend-consumable response contracts
+### Deploy jobs
 
-## Phase 6: Deployment and Operations
+Deploy both services on every push to `master`, even if only one path changed, because that is the requested release model.
 
-Goal: deploy backend safely on Railway and observe usage.
+- `deploy-api`: deploy `dr-stone-api` Railway service
+- `deploy-scrapper`: deploy `dr-stone-scrapper` Railway service
 
-Tasks:
+Recommended workflow changes:
 
-- configure Docker-based Railway deployment and environment bindings
-- bind Postgres to the API service
-- configure scheduled scraping entrypoints
-- define development and production environments
-- monitor deploy health, runtime logs, and database usage
+- keep `concurrency: production-deploy`
+- keep `RAILWAY_TOKEN` secret
+- switch from Python/Docker root deployment to per-service deployment
+- rename the worker deploy target from `dr-stone-worker` to `dr-stone-scrapper`
 
-Deliverables:
+### Railway deployment options
 
-- deployed Railway API
-- scheduled scrape execution in production
-- basic usage monitoring
+Choose one and standardize it:
 
-## Phase 7: Hardening
+1. Configure each Railway service with its own `rootDirectory`, then deploy with `railway up --service ...`
+2. Keep Railway service settings simple and run deploy commands from inside each subdirectory in GitHub Actions
 
-Goal: keep backend stable for continuous operation.
+Recommendation:
 
-Tasks:
+Use per-service `rootDirectory` on Railway and keep the workflow simple.
 
-- add automated tests for parsers, services, and API responses
-- add structured logs
-- add rate limiting and polite delays
-- document scraping assumptions per source
-- review robots.txt and terms per source before enabling scraping
+## Migration Phases
 
-Deliverables:
+### Phase 1: Bootstrap the monorepo
 
-- safer and more maintainable scraping workflow
-- better observability
+- add root `package.json`
+- add `pnpm-workspace.yaml`
+- add `turbo.json`
+- add base `tsconfig`
+- create the three workspaces:
+  - `dr-stone-api`
+  - `dr-stone-scrapper`
+  - `dr-stone-database`
 
-## Final Recommendation
+Exit criteria:
 
-Keep this repository backend-only: Python API + Postgres on Railway, HTTP-first scraping, and stable API contracts.
+- `pnpm install` works
+- workspace scripts run from repo root
 
-Use `../dr-stone-frontend` for frontend specs, UI implementation, and frontend deployment pipeline.
+### Phase 2: Move the database layer first
+
+- port the current Postgres schema and migrations into `dr-stone-database`
+- implement typed repositories matching the current Python storage behavior
+- create a migration runner CLI
+- validate that migrations can bootstrap an empty database
+
+Exit criteria:
+
+- repository methods cover current API and worker needs
+- migration runner works locally and in CI
+
+### Phase 3: Build the TypeScript API
+
+- reimplement the existing endpoints in `dr-stone-api`
+- preserve request and response shapes from `docs/api.md`
+- use the shared database package only
+- add contract tests against the current documented API behavior
+
+Exit criteria:
+
+- TypeScript API passes API contract tests
+- health endpoint and tracked-product flows work against Postgres
+
+### Phase 4: Build the TypeScript worker
+
+- port the collection loop from `src/dr_stone/worker.py`
+- port the current matching and top-4-price persistence rules
+- implement the source registry
+- port the KaBuM source first
+
+Exit criteria:
+
+- worker can perform an end-to-end KaBuM collection and persist results
+- failure logging and run tracking match current behavior
+
+### Phase 5: Add Amazon as a browser-backed source
+
+- convert the current Amazon investigation into a Playwright-based source adapter
+- keep Amazon isolated behind the same `SearchSource` contract
+- reuse the same normalized output shape used by KaBuM
+
+Exit criteria:
+
+- worker supports both KaBuM and Amazon without branching the orchestration layer
+
+### Phase 6: Switch CI/CD and Railway services
+
+- replace the current Python deploy workflow
+- deploy the API from `dr-stone-api/`
+- deploy the worker from `dr-stone-scrapper/`
+- run smoke checks after API deploy
+
+Exit criteria:
+
+- GitHub Actions deploys both services on every push to `master`
+- Railway production uses only TypeScript services
+
+### Phase 7: Decommission Python
+
+- remove Python Dockerfiles
+- remove `pyproject.toml`
+- remove `src/dr_stone/`
+- remove Python test suite after TypeScript parity is confirmed
+
+Exit criteria:
+
+- no production path depends on Python
+- docs reflect only the TypeScript architecture
+
+## Testing Plan
+
+Add tests at three levels:
+
+- unit tests for normalizers, matching, and source parsing
+- integration tests for repositories and migrations against Postgres
+- contract tests for API response parity
+
+Recommended additional coverage:
+
+- KaBuM HTML fixture tests
+- Amazon Playwright smoke tests with a narrow scope
+- worker loop tests for retries and failure recording
+
+## Risks
+
+### 1. Schema drift during the migration
+
+Risk:
+
+- TypeScript services and Python code may write slightly different records during a partial rollout
+
+Mitigation:
+
+- move the database package first
+- keep schema changes minimal until the Python services are retired
+
+### 2. Amazon anti-bot instability
+
+Risk:
+
+- Amazon can become unreliable if treated like KaBuM
+
+Mitigation:
+
+- keep Amazon browser-only from day one
+- isolate browser concerns inside the Amazon adapter
+
+### 3. Deployment order issues
+
+Risk:
+
+- worker deploys against a schema that has not been migrated yet
+
+Mitigation:
+
+- run migrations before both deploys
+- deploy API before worker
+
+### 4. Over-sharing code too early
+
+Risk:
+
+- creating many shared packages too early slows down the migration
+
+Mitigation:
+
+- share only the database package at first
+- add more packages only after duplication becomes real
+
+## Recommended Order of Execution
+
+1. Create the TypeScript monorepo scaffolding.
+2. Move schema, migrations, and repositories into `dr-stone-database/`.
+3. Port the API into `dr-stone-api/` with contract parity.
+4. Port the worker into `dr-stone-scrapper/` with KaBuM support.
+5. Add Amazon as a Playwright-backed adapter.
+6. Update GitHub Actions to validate once and always deploy both services.
+7. Point Railway services to the new paths and cut over production.
+8. Remove Python after a stable production window.
+
+## Definition of Done
+
+The migration is complete when:
+
+- the repository contains `dr-stone-api/`, `dr-stone-scrapper/`, and `dr-stone-database/`
+- both deployable services run only TypeScript in production
+- the shared database package is the only source of migrations and database access
+- the GitHub Actions workflow validates the monorepo and deploys both Railway services on every push to `master`
+- the public API contract remains compatible with the current documented endpoints

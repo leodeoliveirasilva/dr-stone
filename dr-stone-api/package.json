@@ -1,0 +1,19 @@
+{
+  "name": "@dr-stone/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "lint": "eslint src --ext .ts",
+    "typecheck": "tsc -b --pretty false"
+  },
+  "dependencies": {
+    "@dr-stone/database": "workspace:*",
+    "@dr-stone/scrapper": "workspace:*",
+    "fastify": "^5.2.1",
+    "zod": "^3.24.2"
+  }
+}

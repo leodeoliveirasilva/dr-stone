@@ -1,0 +1,22 @@
+{
+  "name": "@dr-stone/scrapper",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "dr-stone-scrapper": "dist/worker.js"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "lint": "eslint src --ext .ts",
+    "typecheck": "tsc -b --pretty false"
+  },
+  "dependencies": {
+    "@dr-stone/database": "workspace:*",
+    "cheerio": "^1.0.0",
+    "pino": "^9.6.0",
+    "playwright": "^1.54.2"
+  }
+}

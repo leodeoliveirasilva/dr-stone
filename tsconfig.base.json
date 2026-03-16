@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2023"],
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "declaration": true,
+    "sourceMap": true,
+    "types": ["node"],
+    "paths": {
+      "@dr-stone/api": ["./dr-stone-api/src/index.ts"],
+      "@dr-stone/database": ["./dr-stone-database/src/index.ts"],
+      "@dr-stone/scrapper": ["./dr-stone-scrapper/src/index.ts"]
+    }
+  }
+}
