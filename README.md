@@ -78,6 +78,8 @@ pnpm start:worker
 
 - Reference: [docs/api.md](/home/leonardo-silva/workspace/personal/dr-stone/docs/api.md)
 - `GET /` returns `{"name":"dr-stone-api","status":"ok"}`
+- Swagger UI: `GET /docs`
+- OpenAPI JSON: `GET /openapi.json`
 
 ## Deployment
 

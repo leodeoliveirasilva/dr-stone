@@ -1,7 +1,10 @@
+import { fileURLToPath } from "node:url";
+
+import swagger from "@fastify/swagger";
+import swaggerUi from "@fastify/swagger-ui";
 import Fastify, {
   type FastifyInstance,
-  type FastifyReply,
-  type FastifyRequest
+  type FastifyReply
 } from "fastify";
 import type { SearchCollectionResult, TrackedProduct } from "@dr-stone/database";
 import { normalizeSearchTerms } from "@dr-stone/database";
@@ -9,6 +12,8 @@ import { z } from "zod";
 
 import type { ApiSettings } from "./env.js";
 import { buildRuntime } from "./services/runtime.js";
+
+const OPENAPI_SPEC_PATH = fileURLToPath(new URL("./openapi.json", import.meta.url));
 
 const trackedProductSchema = z.object({
   title: z.string().trim().min(1),
@@ -24,6 +29,23 @@ export async function createApp(settings: ApiSettings): Promise<FastifyInstance>
   const runtime = await buildRuntime(settings);
   const app = Fastify({ logger: false });
   Reflect.set(app, "drStoneRuntime", runtime);
+
+  await app.register(swagger, {
+    mode: "static",
+    specification: {
+      path: OPENAPI_SPEC_PATH,
+      baseDir: fileURLToPath(new URL(".", import.meta.url))
+    }
+  });
+
+  await app.register(swaggerUi, {
+    routePrefix: "/docs",
+    uiConfig: {
+      docExpansion: "list",
+      deepLinking: true
+    },
+    staticCSP: true
+  });
 
   app.addHook("onRequest", async (request, reply) => {
     const corsOrigin = resolveCorsOrigin(request.headers.origin);
@@ -53,6 +75,11 @@ export async function createApp(settings: ApiSettings): Promise<FastifyInstance>
   app.addHook("onClose", async () => {
     await runtime.collectionService.close();
     await runtime.database.close();
+  });
+
+  app.get("/openapi.json", async (_request, reply) => {
+    reply.type("application/json; charset=utf-8");
+    return app.swagger();
   });
 
   app.get("/", async () => ({ name: "dr-stone-api", status: "ok" }));

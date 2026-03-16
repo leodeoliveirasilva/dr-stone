@@ -87,6 +87,51 @@ describeWithDatabase("api", () => {
     });
   });
 
+  test("serves OpenAPI JSON and Swagger UI", async () => {
+    await withTemporaryDatabase(async (databaseUrl) => {
+      const app = await createApp({
+        host: "127.0.0.1",
+        port: 8080,
+        scrapper: {
+          databaseUrl,
+          timeoutSeconds: 1,
+          maxRetries: 0,
+          retryBackoffSeconds: 0,
+          requestDelaySeconds: 0,
+          logLevel: "silent",
+          userAgent: "test",
+          intervalSeconds: 21600,
+          enabledSources: []
+        }
+      });
+
+      try {
+        const openApiResponse = await app.inject({ method: "GET", url: "/openapi.json" });
+        const docsResponse = await app.inject({ method: "GET", url: "/docs" });
+
+        expect(openApiResponse.statusCode).toBe(200);
+        expect(openApiResponse.headers["content-type"]).toContain("application/json");
+        expect(openApiResponse.json()).toMatchObject({
+          openapi: "3.0.3",
+          info: {
+            title: "Dr. Stone API"
+          }
+        });
+        expect(openApiResponse.json().paths).toMatchObject({
+          "/tracked-products": expect.any(Object),
+          "/price-history/minimums": expect.any(Object),
+          "/search-runs": expect.any(Object)
+        });
+
+        expect(docsResponse.statusCode).toBe(200);
+        expect(docsResponse.headers["content-type"]).toContain("text/html");
+        expect(docsResponse.body).toContain("Swagger UI");
+      } finally {
+        await (app as RuntimeApp).drStoneRuntime?.database.close();
+      }
+    });
+  });
+
   test("handles CORS preflight and restricts origins", async () => {
     await withTemporaryDatabase(async (databaseUrl) => {
       const app = await createApp({

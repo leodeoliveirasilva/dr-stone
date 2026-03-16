@@ -1,0 +1,1093 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Dr. Stone API",
+    "description": "HTTP API for tracked products, collection runs, and historical price analysis.",
+    "version": "0.1.0"
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "Current server"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Documentation",
+      "description": "Swagger and OpenAPI endpoints."
+    },
+    {
+      "name": "System",
+      "description": "Service status endpoints."
+    },
+    {
+      "name": "Tracked Products",
+      "description": "CRUD operations for products tracked across all enabled sources."
+    },
+    {
+      "name": "Collection",
+      "description": "Manual collection triggers."
+    },
+    {
+      "name": "Price History",
+      "description": "Historical price windows and minimum price aggregations."
+    },
+    {
+      "name": "Search Runs",
+      "description": "Source-specific collection runs and persisted matched items."
+    }
+  ],
+  "paths": {
+    "/docs": {
+      "get": {
+        "tags": ["Documentation"],
+        "summary": "Swagger UI",
+        "operationId": "getSwaggerUi",
+        "responses": {
+          "200": {
+            "description": "Swagger UI HTML page.",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "tags": ["Documentation"],
+        "summary": "OpenAPI document",
+        "operationId": "getOpenApiDocument",
+        "responses": {
+          "200": {
+            "description": "The OpenAPI document for this API.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/": {
+      "get": {
+        "tags": ["System"],
+        "summary": "API status",
+        "operationId": "getRootStatus",
+        "responses": {
+          "200": {
+            "description": "Service metadata.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RootResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": ["System"],
+        "summary": "Health check",
+        "operationId": "getHealth",
+        "responses": {
+          "200": {
+            "description": "Service health status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/search-runs": {
+      "get": {
+        "tags": ["Search Runs"],
+        "summary": "List search runs",
+        "operationId": "listSearchRuns",
+        "parameters": [
+          {
+            "name": "date",
+            "in": "query",
+            "description": "Optional UTC calendar date filter in YYYY-MM-DD format.",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of runs to return. Defaults to 40 and is capped at 200.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 40
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Search runs and their persisted matched items.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchRunsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/tracked-products": {
+      "get": {
+        "tags": ["Tracked Products"],
+        "summary": "List tracked products",
+        "operationId": "listTrackedProducts",
+        "parameters": [
+          {
+            "name": "all",
+            "in": "query",
+            "description": "Send `1` to include inactive tracked products.",
+            "schema": {
+              "type": "string",
+              "enum": ["1"]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tracked products ordered by creation time.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TrackedProduct"
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      },
+      "post": {
+        "tags": ["Tracked Products"],
+        "summary": "Create a tracked product",
+        "operationId": "createTrackedProduct",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TrackedProductCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Tracked product created.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrackedProduct"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/collect-due": {
+      "post": {
+        "tags": ["Collection"],
+        "summary": "Collect all due tracked products",
+        "operationId": "collectDueTrackedProducts",
+        "responses": {
+          "200": {
+            "description": "Collection results for every active tracked product.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CollectionResult"
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/tracked-products/{trackedProductId}": {
+      "parameters": [
+        {
+          "name": "trackedProductId",
+          "in": "path",
+          "required": true,
+          "description": "Tracked product identifier.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "tags": ["Tracked Products"],
+        "summary": "Get a tracked product",
+        "operationId": "getTrackedProduct",
+        "responses": {
+          "200": {
+            "description": "Tracked product details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrackedProduct"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      },
+      "post": {
+        "tags": ["Collection"],
+        "summary": "Collect one tracked product",
+        "operationId": "collectTrackedProduct",
+        "parameters": [
+          {
+            "name": "action",
+            "in": "query",
+            "required": true,
+            "description": "Must be set to `collect`.",
+            "schema": {
+              "type": "string",
+              "enum": ["collect"]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Collection result for the tracked product.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CollectionResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      },
+      "put": {
+        "tags": ["Tracked Products"],
+        "summary": "Replace tracked product fields",
+        "operationId": "replaceTrackedProduct",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TrackedProductUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated tracked product.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrackedProduct"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      },
+      "patch": {
+        "tags": ["Tracked Products"],
+        "summary": "Update tracked product fields",
+        "operationId": "updateTrackedProduct",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TrackedProductUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated tracked product.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrackedProduct"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      },
+      "delete": {
+        "tags": ["Tracked Products"],
+        "summary": "Delete a tracked product",
+        "operationId": "deleteTrackedProduct",
+        "responses": {
+          "204": {
+            "description": "Tracked product deleted."
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/tracked-products/{trackedProductId}/history": {
+      "get": {
+        "tags": ["Price History"],
+        "summary": "Get tracked product history",
+        "operationId": "getTrackedProductHistory",
+        "parameters": [
+          {
+            "name": "trackedProductId",
+            "in": "path",
+            "required": true,
+            "description": "Tracked product identifier.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of items to return. Defaults to 100 and is capped at 500.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500,
+              "default": 100
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Zero-based offset for pagination.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            }
+          },
+          {
+            "name": "start_at",
+            "in": "query",
+            "description": "Optional start bound. Accepts YYYY-MM-DD or ISO 8601 datetime.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "end_at",
+            "in": "query",
+            "description": "Optional end bound. Accepts YYYY-MM-DD or ISO 8601 datetime.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated saved history window for a tracked product.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/price-history/minimums": {
+      "get": {
+        "tags": ["Price History"],
+        "summary": "Get minimum prices by period",
+        "operationId": "getPriceHistoryMinimums",
+        "parameters": [
+          {
+            "name": "product_id",
+            "in": "query",
+            "required": true,
+            "description": "Tracked product identifier.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "granularity",
+            "in": "query",
+            "description": "Preferred period selector. Must be `day`, `week`, or `month`.",
+            "schema": {
+              "type": "string",
+              "enum": ["day", "week", "month"]
+            }
+          },
+          {
+            "name": "period",
+            "in": "query",
+            "description": "Legacy alias for `granularity`. If both are sent they must match.",
+            "schema": {
+              "type": "string",
+              "enum": ["day", "week", "month"]
+            }
+          },
+          {
+            "name": "start_at",
+            "in": "query",
+            "required": true,
+            "description": "Range start. Accepts YYYY-MM-DD or ISO 8601 datetime.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "end_at",
+            "in": "query",
+            "required": true,
+            "description": "Range end. Accepts YYYY-MM-DD or ISO 8601 datetime.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lowest saved price found for each period in the requested range.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MinimumsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "responses": {
+      "BadRequest": {
+        "description": "Invalid request payload or query parameters.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "Requested resource was not found.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "InternalServerError": {
+        "description": "Unhandled server error.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "RootResponse": {
+        "type": "object",
+        "required": ["name", "status"],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        }
+      },
+      "HealthResponse": {
+        "type": "object",
+        "required": ["status"],
+        "properties": {
+          "status": {
+            "type": "string"
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "required": ["error"],
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "error_type": {
+            "type": "string"
+          }
+        }
+      },
+      "TrackedProduct": {
+        "type": "object",
+        "required": ["id", "title", "search_terms", "active", "created_at", "updated_at"],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "search_terms": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "TrackedProductWriteBase": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Product display title."
+          },
+          "search_terms": {
+            "type": "array",
+            "description": "Preferred multi-term matcher. Send between 1 and 5 non-empty terms.",
+            "minItems": 1,
+            "maxItems": 5,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "search_term": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Legacy single-term alias used when `search_terms` is omitted."
+          },
+          "active": {
+            "type": "boolean",
+            "description": "When false, the tracked product is excluded from due collection runs."
+          }
+        }
+      },
+      "TrackedProductCreateRequest": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/TrackedProductWriteBase"
+          },
+          {
+            "type": "object",
+            "required": ["title"],
+            "anyOf": [
+              {
+                "required": ["search_terms"]
+              },
+              {
+                "required": ["search_term"]
+              }
+            ]
+          }
+        ]
+      },
+      "TrackedProductUpdateRequest": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/TrackedProductWriteBase"
+          }
+        ],
+        "description": "Any subset of writable tracked product fields."
+      },
+      "CollectionResult": {
+        "type": "object",
+        "required": [
+          "tracked_product_id",
+          "search_run_ids",
+          "successful_runs",
+          "failed_runs",
+          "total_results",
+          "matched_results",
+          "page_count"
+        ],
+        "properties": {
+          "tracked_product_id": {
+            "type": "string"
+          },
+          "search_run_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "successful_runs": {
+            "type": "integer"
+          },
+          "failed_runs": {
+            "type": "integer"
+          },
+          "total_results": {
+            "type": "integer"
+          },
+          "matched_results": {
+            "type": "integer"
+          },
+          "page_count": {
+            "type": "integer"
+          }
+        }
+      },
+      "HistoryItem": {
+        "type": "object",
+        "required": [
+          "captured_at",
+          "product_title",
+          "canonical_url",
+          "price",
+          "currency",
+          "seller_name",
+          "search_run_id"
+        ],
+        "properties": {
+          "captured_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "product_title": {
+            "type": "string"
+          },
+          "canonical_url": {
+            "type": "string"
+          },
+          "price": {
+            "type": "string"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "seller_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "search_run_id": {
+            "type": "string"
+          }
+        }
+      },
+      "HistoryResponse": {
+        "type": "object",
+        "required": [
+          "product_id",
+          "product_title",
+          "limit",
+          "offset",
+          "has_more",
+          "next_offset",
+          "start_at",
+          "end_at",
+          "items"
+        ],
+        "properties": {
+          "product_id": {
+            "type": "string"
+          },
+          "product_title": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer"
+          },
+          "offset": {
+            "type": "integer"
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "next_offset": {
+            "type": "integer",
+            "nullable": true
+          },
+          "start_at": {
+            "type": "string",
+            "nullable": true
+          },
+          "end_at": {
+            "type": "string",
+            "nullable": true
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HistoryItem"
+            }
+          }
+        }
+      },
+      "MinimumPriceItem": {
+        "type": "object",
+        "required": [
+          "period_start",
+          "captured_at",
+          "product_title",
+          "source_product_title",
+          "canonical_url",
+          "price",
+          "currency",
+          "seller_name",
+          "search_run_id"
+        ],
+        "properties": {
+          "period_start": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "captured_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "product_title": {
+            "type": "string"
+          },
+          "source_product_title": {
+            "type": "string"
+          },
+          "canonical_url": {
+            "type": "string"
+          },
+          "price": {
+            "type": "string"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "seller_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "search_run_id": {
+            "type": "string"
+          }
+        }
+      },
+      "MinimumsResponse": {
+        "type": "object",
+        "required": [
+          "product_id",
+          "product_title",
+          "granularity",
+          "period",
+          "start_at",
+          "end_at",
+          "items"
+        ],
+        "properties": {
+          "product_id": {
+            "type": "string"
+          },
+          "product_title": {
+            "type": "string"
+          },
+          "granularity": {
+            "type": "string",
+            "enum": ["day", "week", "month"]
+          },
+          "period": {
+            "type": "string",
+            "enum": ["day", "week", "month"]
+          },
+          "start_at": {
+            "type": "string"
+          },
+          "end_at": {
+            "type": "string"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MinimumPriceItem"
+            }
+          }
+        }
+      },
+      "SearchRunItem": {
+        "type": "object",
+        "required": [
+          "search_run_id",
+          "product_title",
+          "canonical_url",
+          "price_value",
+          "currency",
+          "seller_name",
+          "availability",
+          "is_available",
+          "position",
+          "captured_at"
+        ],
+        "properties": {
+          "search_run_id": {
+            "type": "string"
+          },
+          "product_title": {
+            "type": "string"
+          },
+          "canonical_url": {
+            "type": "string"
+          },
+          "price_value": {
+            "type": "string"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "seller_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "availability": {
+            "type": "string"
+          },
+          "is_available": {
+            "type": "boolean"
+          },
+          "position": {
+            "type": "integer"
+          },
+          "captured_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "SearchRun": {
+        "type": "object",
+        "required": [
+          "id",
+          "tracked_product_id",
+          "source_name",
+          "search_term",
+          "search_url",
+          "status",
+          "started_at",
+          "finished_at",
+          "duration_ms",
+          "total_results",
+          "matched_results",
+          "page_count",
+          "message",
+          "created_at",
+          "tracked_product_title",
+          "tracked_product_active",
+          "items"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "tracked_product_id": {
+            "type": "string"
+          },
+          "source_name": {
+            "type": "string"
+          },
+          "search_term": {
+            "type": "string"
+          },
+          "search_url": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "finished_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "duration_ms": {
+            "type": "integer",
+            "nullable": true
+          },
+          "total_results": {
+            "type": "integer",
+            "nullable": true
+          },
+          "matched_results": {
+            "type": "integer",
+            "nullable": true
+          },
+          "page_count": {
+            "type": "integer",
+            "nullable": true
+          },
+          "message": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "tracked_product_title": {
+            "type": "string",
+            "nullable": true
+          },
+          "tracked_product_active": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SearchRunItem"
+            }
+          }
+        }
+      },
+      "SearchRunsResponse": {
+        "type": "object",
+        "required": ["date", "runs"],
+        "properties": {
+          "date": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "runs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SearchRun"
+            }
+          }
+        }
+      }
+    }
+  }
+}
