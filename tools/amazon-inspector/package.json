@@ -1,0 +1,16 @@
+{
+  "name": "amazon-inspector",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Playwright-based inspection utilities for mapping Amazon.com.br scraping feasibility.",
+  "type": "module",
+  "scripts": {
+    "inspect": "playwright test -c playwright.config.ts",
+    "inspect:headed": "playwright test -c playwright.config.ts --headed"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.54.2",
+    "@types/node": "^24.5.2",
+    "typescript": "^5.9.2"
+  }
+}

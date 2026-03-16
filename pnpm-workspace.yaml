@@ -1,0 +1,4 @@
+packages:
+  - dr-stone-api
+  - dr-stone-database
+  - dr-stone-scrapper

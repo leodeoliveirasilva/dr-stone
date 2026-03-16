@@ -1,0 +1,8 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./dr-stone-database" },
+    { "path": "./dr-stone-scrapper" },
+    { "path": "./dr-stone-api" }
+  ]
+}

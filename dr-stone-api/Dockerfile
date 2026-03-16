@@ -1,4 +1,4 @@
-FROM node:24.14.0-slim AS builder
+FROM node:24.14.0-slim AS build
 
 WORKDIR /app
 
@@ -26,11 +26,11 @@ FROM node:24.14.0-slim
 WORKDIR /app
 
 ENV NODE_ENV=production
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
 
-COPY --from=builder /app/package.json ./
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/dr-stone-api ./dr-stone-api
-COPY --from=builder /app/dr-stone-database ./dr-stone-database
-COPY --from=builder /app/dr-stone-scrapper ./dr-stone-scrapper
+RUN corepack enable
+
+COPY --from=build /app /app
 
 CMD ["node", "dr-stone-api/dist/index.js"]
