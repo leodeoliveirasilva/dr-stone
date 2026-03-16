@@ -3,9 +3,9 @@
   "private": true,
   "packageManager": "pnpm@10.7.1",
   "scripts": {
-    "build": "corepack pnpm --recursive --filter @dr-stone/api --filter @dr-stone/database --filter @dr-stone/scrapper run build",
+    "build": "corepack pnpm exec tsc -b",
     "lint": "corepack pnpm --recursive --filter @dr-stone/api --filter @dr-stone/database --filter @dr-stone/scrapper run lint",
-    "typecheck": "corepack pnpm --recursive --filter @dr-stone/api --filter @dr-stone/database --filter @dr-stone/scrapper run typecheck",
+    "typecheck": "corepack pnpm exec tsc -b --pretty false --force",
     "test": "vitest run",
     "migrate": "corepack pnpm --filter @dr-stone/database run migrate",
     "start:api": "node dr-stone-api/dist/index.js",
