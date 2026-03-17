@@ -27,10 +27,15 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
+RUN corepack enable
+
 COPY --from=builder /app/package.json ./
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dr-stone-api ./dr-stone-api
 COPY --from=builder /app/dr-stone-database ./dr-stone-database
 COPY --from=builder /app/dr-stone-scrapper ./dr-stone-scrapper
+
+# Install the browser binary and OS packages required by the Amazon Playwright source.
+RUN pnpm --filter @dr-stone/scrapper exec playwright install --with-deps chromium
 
 CMD ["node", "dr-stone-scrapper/dist/worker.js"]

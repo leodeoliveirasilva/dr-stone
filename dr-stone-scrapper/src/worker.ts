@@ -66,6 +66,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     throw new Error("interval-seconds must be a positive integer");
   }
 
+  const configuredSources = process.env.DR_STONE_ENABLED_SOURCES;
   const settings = loadScrapperSettings({
     intervalSeconds: args.intervalSeconds
   });
@@ -75,6 +76,28 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   }
 
   const logger = createLogger(settings.logLevel);
+  logger.info(
+    {
+      event: "worker_started",
+      runOnce: args.runOnce,
+      intervalSeconds: settings.intervalSeconds,
+      enabledSources: settings.enabledSources,
+      sourceConfiguration: configuredSources ? "environment" : "default"
+    },
+    "worker_started"
+  );
+
+  if (!configuredSources) {
+    logger.warn(
+      {
+        event: "worker_default_sources_used",
+        defaultEnabledSources: settings.enabledSources,
+        environmentVariable: "DR_STONE_ENABLED_SOURCES"
+      },
+      "worker_default_sources_used"
+    );
+  }
+
   const database = await buildDatabaseServices(settings);
   const service = new SearchCollectionService(
     database,

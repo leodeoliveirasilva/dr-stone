@@ -28,8 +28,33 @@ export class SearchCollectionService {
     let failedRuns = 0;
     let lastError: unknown;
 
+    this.logger.info(
+      {
+        event: "search_collection_started",
+        trackedProductId: trackedProduct.id,
+        productTitle: trackedProduct.productTitle,
+        searchTerms: trackedProduct.searchTerms,
+        searchQuery,
+        sourceCount: this.searchSources.length,
+        enabledSources: this.searchSources.map((source) => source.sourceName)
+      },
+      "search_collection_started"
+    );
+
     for (const source of this.searchSources) {
       const searchUrl = source.buildSearchUrl(searchQuery);
+      this.logger.info(
+        {
+          event: "search_source_started",
+          trackedProductId: trackedProduct.id,
+          productTitle: trackedProduct.productTitle,
+          source: source.sourceName,
+          strategy: source.strategy,
+          searchTerm: searchQuery,
+          searchUrl
+        },
+        "search_source_started"
+      );
       const searchRunId = await this.database.searchRuns.create({
         trackedProductId: trackedProduct.id,
         sourceName: source.sourceName,
@@ -65,6 +90,20 @@ export class SearchCollectionService {
           message: "lowest_prices_saved"
         });
 
+        this.logger.info(
+          {
+            event: "search_source_succeeded",
+            trackedProductId: trackedProduct.id,
+            productTitle: trackedProduct.productTitle,
+            searchRunId,
+            source: source.sourceName,
+            totalResults: run.totalResults,
+            matchedResults: inserted,
+            pageCount: run.pageCount
+          },
+          "search_source_succeeded"
+        );
+
         totalResults += run.totalResults;
         matchedResults += inserted;
         pageCount += run.pageCount;
@@ -76,6 +115,21 @@ export class SearchCollectionService {
           status: "failed",
           message: failure.message
         });
+        this.logger.error(
+          {
+            event: "search_source_failed",
+            trackedProductId: trackedProduct.id,
+            productTitle: trackedProduct.productTitle,
+            searchRunId,
+            source: source.sourceName,
+            stage: failure.stage,
+            errorCode: failure.errorCode,
+            errorType: failure.errorType,
+            message: failure.message,
+            targetUrl: failure.targetUrl
+          },
+          "search_source_failed"
+        );
         failedRuns += 1;
         lastError = error;
       }
@@ -108,6 +162,14 @@ export class SearchCollectionService {
 
   async collectAllActive(): Promise<SearchCollectionResult[]> {
     const trackedProducts = await this.database.trackedProducts.list({ activeOnly: true });
+    this.logger.info(
+      {
+        event: "search_collection_cycle_started",
+        trackedProductCount: trackedProducts.length,
+        enabledSources: this.searchSources.map((source) => source.sourceName)
+      },
+      "search_collection_cycle_started"
+    );
     return Promise.all(trackedProducts.map((product) => this.collectTrackedProduct(product)));
   }
 

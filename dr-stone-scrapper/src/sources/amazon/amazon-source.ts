@@ -37,6 +37,10 @@ export class AmazonSource implements SearchSource {
       });
 
       const items = await this.extractItems(page);
+      const resultNodeCount = await page.locator('[data-component-type="s-search-result"]').count();
+      const captchaDetected =
+        (await page.locator('input#captchacharacters').count()) > 0 ||
+        (await page.locator('form[action*="errors/validateCaptcha"]').count()) > 0;
       const result: SearchRunResult = {
         source: this.sourceName,
         searchTerm,
@@ -63,6 +67,21 @@ export class AmazonSource implements SearchSource {
         "search_scrape_succeeded"
       );
 
+      if (items.length === 0) {
+        this.logger.warn(
+          {
+            event: "search_scrape_empty",
+            source: this.sourceName,
+            searchTerm,
+            resolvedUrl: result.resolvedUrl,
+            pageTitle: await page.title(),
+            resultNodeCount,
+            captchaDetected
+          },
+          "search_scrape_empty"
+        );
+      }
+
       return result;
     } finally {
       await context.close();
@@ -83,25 +102,42 @@ export class AmazonSource implements SearchSource {
     return page.$$eval('[data-component-type="s-search-result"]', (nodes) =>
       nodes
         .map((node, index) => {
-          const title = node.querySelector("h2 span")?.textContent?.trim();
-          const link = node.querySelector("h2 a") as { href?: string } | null;
+          const title =
+            node.querySelector("h2 a span")?.textContent?.trim() ??
+            node.querySelector("h2 span")?.textContent?.trim();
+          const link = (node.querySelector('a[href*="/dp/"]') ??
+            node.querySelector("h2 a")) as {
+            href?: string | null;
+            getAttribute(name: string): string | null;
+          } | null;
           const asin = node.getAttribute("data-asin")?.trim() ?? null;
+          const offscreenPrice =
+            node.querySelector(".a-price .a-offscreen")?.textContent?.trim() ?? null;
           const whole = node.querySelector(".a-price-whole")?.textContent?.trim() ?? "";
           const fraction = node.querySelector(".a-price-fraction")?.textContent?.trim() ?? "00";
           const badge =
             node.querySelector('[aria-label*="Amazon"]')?.textContent?.trim() ??
+            node.querySelector(".a-badge-label-inner")?.textContent?.trim() ??
             node.querySelector(".a-badge-label")?.textContent?.trim() ??
             null;
-          const priceText = whole ? `${whole},${fraction}` : null;
+          const normalizedWhole = whole.replace(/[,.]+$/, "");
+          const href = link?.href?.trim() ?? link?.getAttribute("href")?.trim() ?? null;
+          const canonicalUrl = asin
+            ? `https://www.amazon.com.br/dp/${asin}`
+            : href
+              ? new URL(href, "https://www.amazon.com.br").toString().split("?")[0]
+              : null;
+          const priceText =
+            offscreenPrice ?? (normalizedWhole ? `${normalizedWhole},${fraction}` : null);
 
-          if (!title || !link?.href || !priceText) {
+          if (!title || !canonicalUrl || !priceText) {
             return null;
           }
 
           return {
             source: "amazon",
             title,
-            canonicalUrl: link.href,
+            canonicalUrl,
             price: priceText,
             currency: "BRL",
             availability: "in_stock",
