@@ -7,8 +7,13 @@ import Fastify, {
   type FastifyInstance,
   type FastifyReply
 } from "fastify";
-import type { SearchCollectionResult, TrackedProduct } from "@dr-stone/database";
-import { normalizeSearchTerms } from "@dr-stone/database";
+import type { RegisteredSource, SearchCollectionResult, TrackedProduct } from "@dr-stone/database";
+import {
+  SOURCE_FILTER_ALL,
+  getSourceDefinition,
+  normalizeSearchTerms,
+  parseSourceFilter
+} from "@dr-stone/database";
 import { z } from "zod";
 
 import type { ApiSettings } from "./env.js";
@@ -99,6 +104,9 @@ export async function createApp(settings: ApiSettings): Promise<FastifyInstance>
 
   app.get("/", async () => ({ name: "dr-stone-api", status: "ok" }));
   app.get("/health", async () => ({ status: "ok" }));
+  app.get("/sources", async () => ({
+    sources: runtime.sources.map(toSourceResponse)
+  }));
 
   app.get("/search-runs", async (request) => {
     const query = request.query as { date?: string; limit?: string };
@@ -215,12 +223,14 @@ export async function createApp(settings: ApiSettings): Promise<FastifyInstance>
       offset?: string;
       start_at?: string;
       end_at?: string;
+      source?: string;
     };
 
     const limit = parsePositiveInt(query.limit, "limit", { defaultValue: 100, maximum: 500 });
     const offset = parseNonNegativeInt(query.offset, "offset", 0);
     const startAt = parseOptionalDateTimeQueryParam(query.start_at, "start_at");
     const endAt = parseOptionalDateTimeQueryParam(query.end_at, "end_at", true);
+    const sourceFilter = parseSourceQueryParam(query.source);
 
     if (startAt && endAt && startAt > endAt) {
       throw badRequest("start_at must be less than or equal to end_at.");
@@ -231,7 +241,8 @@ export async function createApp(settings: ApiSettings): Promise<FastifyInstance>
       limit: limit + 1,
       offset,
       startAt,
-      endAt
+      endAt,
+      sourceName: sourceFilter === SOURCE_FILTER_ALL ? null : sourceFilter
     });
 
     const hasMore = historyRows.length > limit;
@@ -240,21 +251,14 @@ export async function createApp(settings: ApiSettings): Promise<FastifyInstance>
     return {
       product_id: trackedProductId,
       product_title: trackedProduct.productTitle,
+      source_filter: sourceFilter,
       limit,
       offset,
       has_more: hasMore,
       next_offset: hasMore ? offset + items.length : null,
       start_at: startAt,
       end_at: endAt,
-      items: items.map((item) => ({
-        captured_at: item.capturedAt,
-        product_title: item.productTitle,
-        canonical_url: item.canonicalUrl,
-        price: item.price,
-        currency: item.currency,
-        seller_name: item.sellerName,
-        search_run_id: item.searchRunId
-      }))
+      items: items.map(toHistoryItemResponse)
     };
   });
 
@@ -265,12 +269,14 @@ export async function createApp(settings: ApiSettings): Promise<FastifyInstance>
       granularity?: string;
       start_at?: string;
       end_at?: string;
+      source?: string;
     };
 
     const productId = requireQueryString(query.product_id, "product_id");
     const period = parsePeriodOrGranularity(query.period, query.granularity);
     const startAt = parseDateTimeQueryParam(query.start_at, "start_at");
     const endAt = parseDateTimeQueryParam(query.end_at, "end_at", true);
+    const sourceFilter = parseSourceQueryParam(query.source);
     if (startAt > endAt) {
       throw badRequest("start_at must be less than or equal to end_at.");
     }
@@ -284,8 +290,30 @@ export async function createApp(settings: ApiSettings): Promise<FastifyInstance>
       trackedProductId: productId,
       period,
       startAt,
-      endAt
+      endAt,
+      sourceName: sourceFilter === SOURCE_FILTER_ALL ? null : sourceFilter
     });
+
+    const items = minimumRows.map(toMinimumPriceItemResponse);
+    const groupedSeries = new Map<string, ReturnType<typeof toMinimumPriceItemResponse>[]>();
+    for (const item of items) {
+      const bucket = groupedSeries.get(item.source_name) ?? [];
+      bucket.push(item);
+      groupedSeries.set(item.source_name, bucket);
+    }
+
+    const series =
+      sourceFilter === SOURCE_FILTER_ALL
+        ? Array.from(groupedSeries.entries()).map(([sourceName, sourceItems]) => ({
+            ...toSourceMetadataResponse(sourceName),
+            items: sourceItems
+          }))
+        : [
+            {
+              ...toSourceMetadataResponse(sourceFilter),
+              items: groupedSeries.get(sourceFilter) ?? []
+            }
+          ];
 
     return {
       product_id: productId,
@@ -294,17 +322,9 @@ export async function createApp(settings: ApiSettings): Promise<FastifyInstance>
       period,
       start_at: startAt,
       end_at: endAt,
-      items: minimumRows.map((row) => ({
-        period_start: row.periodStart,
-        captured_at: row.capturedAt,
-        product_title: trackedProduct.productTitle,
-        source_product_title: row.productTitle,
-        canonical_url: row.canonicalUrl,
-        price: row.price,
-        currency: row.currency,
-        seller_name: row.sellerName,
-        search_run_id: row.searchRunId
-      }))
+      source_filter: sourceFilter,
+      series,
+      items
     };
   });
 
@@ -434,6 +454,70 @@ function toCollectionResultResponse(result: SearchCollectionResult) {
   };
 }
 
+function toSourceResponse(source: RegisteredSource) {
+  return {
+    source_name: source.sourceName,
+    source_label: source.sourceLabel,
+    active: source.active
+  };
+}
+
+function toSourceMetadataResponse(sourceName: string) {
+  const source = getSourceDefinition(sourceName);
+
+  return {
+    source_name: source.sourceName,
+    source_label: source.sourceLabel
+  };
+}
+
+function toHistoryItemResponse(item: {
+  capturedAt: string;
+  productTitle: string;
+  canonicalUrl: string;
+  price: string;
+  currency: string;
+  sellerName: string | null;
+  searchRunId: string;
+  sourceName: string;
+}) {
+  return {
+    captured_at: item.capturedAt,
+    product_title: item.productTitle,
+    canonical_url: item.canonicalUrl,
+    price: item.price,
+    currency: item.currency,
+    seller_name: item.sellerName,
+    search_run_id: item.searchRunId,
+    ...toSourceMetadataResponse(item.sourceName)
+  };
+}
+
+function toMinimumPriceItemResponse(item: {
+  periodStart: string;
+  capturedAt: string;
+  productTitle: string;
+  canonicalUrl: string;
+  price: string;
+  currency: string;
+  sellerName: string | null;
+  searchRunId: string;
+  sourceName: string;
+}) {
+  return {
+    period_start: item.periodStart,
+    captured_at: item.capturedAt,
+    product_title: item.productTitle,
+    source_product_title: item.productTitle,
+    canonical_url: item.canonicalUrl,
+    price: item.price,
+    currency: item.currency,
+    seller_name: item.sellerName,
+    search_run_id: item.searchRunId,
+    ...toSourceMetadataResponse(item.sourceName)
+  };
+}
+
 function requireQueryString(value: string | undefined, fieldName: string): string {
   const text = value?.trim();
   if (!text) {
@@ -441,6 +525,14 @@ function requireQueryString(value: string | undefined, fieldName: string): strin
   }
 
   return text;
+}
+
+function parseSourceQueryParam(value: string | undefined) {
+  try {
+    return parseSourceFilter(value, { defaultValue: SOURCE_FILTER_ALL });
+  } catch {
+    throw badRequest("source must be `all` or a valid source_name.");
+  }
 }
 
 function parsePositiveInt(

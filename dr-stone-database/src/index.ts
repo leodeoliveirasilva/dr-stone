@@ -8,6 +8,7 @@ import { TrackedProductsRepository } from "./repositories/tracked-products.js";
 
 export * from "./client/database.js";
 export * from "./schema.js";
+export * from "./sources.js";
 export * from "./types.js";
 export * from "./utils.js";
 

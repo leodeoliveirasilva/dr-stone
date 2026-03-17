@@ -21,6 +21,10 @@
       "description": "Service status endpoints."
     },
     {
+      "name": "Sources",
+      "description": "Canonical source catalog and source metadata."
+    },
+    {
       "name": "Tracked Products",
       "description": "CRUD operations for products tracked across all enabled sources."
     },
@@ -111,6 +115,28 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/sources": {
+      "get": {
+        "tags": ["Sources"],
+        "summary": "List canonical sources",
+        "operationId": "listSources",
+        "responses": {
+          "200": {
+            "description": "Known sources and whether they are active in the current runtime.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceCatalogResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
           }
         }
       }
@@ -469,6 +495,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "description": "Optional source filter. Defaults to `all`. Accepts `all` or a valid `source_name`.",
+            "schema": {
+              "type": "string",
+              "default": "all"
+            }
           }
         ],
         "responses": {
@@ -544,11 +579,20 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "description": "Optional source filter. Defaults to `all`. Accepts `all` or a valid `source_name`.",
+            "schema": {
+              "type": "string",
+              "default": "all"
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "Lowest saved price found for each period in the requested range.",
+            "description": "Per-source minimum price series found for each period in the requested range.",
             "content": {
               "application/json": {
                 "schema": {
@@ -634,6 +678,46 @@
           },
           "error_type": {
             "type": "string"
+          }
+        }
+      },
+      "SourceMetadata": {
+        "type": "object",
+        "required": ["source_name", "source_label"],
+        "properties": {
+          "source_name": {
+            "type": "string"
+          },
+          "source_label": {
+            "type": "string"
+          }
+        }
+      },
+      "Source": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/SourceMetadata"
+          },
+          {
+            "type": "object",
+            "required": ["active"],
+            "properties": {
+              "active": {
+                "type": "boolean"
+              }
+            }
+          }
+        ]
+      },
+      "SourceCatalogResponse": {
+        "type": "object",
+        "required": ["sources"],
+        "properties": {
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Source"
+            }
           }
         }
       },
@@ -770,7 +854,9 @@
           "price",
           "currency",
           "seller_name",
-          "search_run_id"
+          "search_run_id",
+          "source_name",
+          "source_label"
         ],
         "properties": {
           "captured_at": {
@@ -795,6 +881,12 @@
           },
           "search_run_id": {
             "type": "string"
+          },
+          "source_name": {
+            "type": "string"
+          },
+          "source_label": {
+            "type": "string"
           }
         }
       },
@@ -803,6 +895,7 @@
         "required": [
           "product_id",
           "product_title",
+          "source_filter",
           "limit",
           "offset",
           "has_more",
@@ -816,6 +909,9 @@
             "type": "string"
           },
           "product_title": {
+            "type": "string"
+          },
+          "source_filter": {
             "type": "string"
           },
           "limit": {
@@ -858,7 +954,9 @@
           "price",
           "currency",
           "seller_name",
-          "search_run_id"
+          "search_run_id",
+          "source_name",
+          "source_label"
         ],
         "properties": {
           "period_start": {
@@ -890,6 +988,30 @@
           },
           "search_run_id": {
             "type": "string"
+          },
+          "source_name": {
+            "type": "string"
+          },
+          "source_label": {
+            "type": "string"
+          }
+        }
+      },
+      "MinimumPriceSeries": {
+        "type": "object",
+        "required": ["source_name", "source_label", "items"],
+        "properties": {
+          "source_name": {
+            "type": "string"
+          },
+          "source_label": {
+            "type": "string"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MinimumPriceItem"
+            }
           }
         }
       },
@@ -902,6 +1024,8 @@
           "period",
           "start_at",
           "end_at",
+          "source_filter",
+          "series",
           "items"
         ],
         "properties": {
@@ -924,6 +1048,15 @@
           },
           "end_at": {
             "type": "string"
+          },
+          "source_filter": {
+            "type": "string"
+          },
+          "series": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MinimumPriceSeries"
+            }
           },
           "items": {
             "type": "array",

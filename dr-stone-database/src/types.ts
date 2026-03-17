@@ -48,6 +48,7 @@ export interface SearchHistoryEntry {
   currency: string;
   sellerName: string | null;
   searchRunId: string;
+  sourceName: string;
 }
 
 export interface PeriodMinimumPriceEntry {
@@ -59,6 +60,7 @@ export interface PeriodMinimumPriceEntry {
   currency: string;
   sellerName: string | null;
   searchRunId: string;
+  sourceName: string;
 }
 
 export interface ScrapeFailure {

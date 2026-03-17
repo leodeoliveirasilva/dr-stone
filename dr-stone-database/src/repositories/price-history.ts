@@ -14,6 +14,7 @@ interface SearchHistoryRow extends Record<string, unknown> {
   currency: string;
   seller_name: string | null;
   search_run_id: string;
+  source_name: string;
 }
 
 interface PeriodMinimumRow extends SearchHistoryRow {
@@ -29,6 +30,7 @@ export class PriceHistoryRepository {
     offset?: number;
     startAt?: string | null;
     endAt?: string | null;
+    sourceName?: string | null;
   }): Promise<SearchHistoryEntry[]> {
     const rows = await this.db.execute<SearchHistoryRow>(sql`
       SELECT
@@ -38,11 +40,13 @@ export class PriceHistoryRepository {
         price_value,
         currency,
         seller_name,
-        search_run_id
+        search_run_id,
+        source_name
       FROM search_run_items
       WHERE tracked_product_id = ${input.trackedProductId}
       ${input.startAt ? sql`AND captured_at >= ${input.startAt}` : sql``}
       ${input.endAt ? sql`AND captured_at <= ${input.endAt}` : sql``}
+      ${input.sourceName ? sql`AND source_name = ${input.sourceName}` : sql``}
       ORDER BY captured_at DESC, CAST(price_value AS NUMERIC) ASC, canonical_url ASC, search_run_id ASC
       LIMIT ${input.limit ?? 100}
       OFFSET ${input.offset ?? 0}
@@ -55,7 +59,8 @@ export class PriceHistoryRepository {
       price: row.price_value,
       currency: row.currency,
       sellerName: row.seller_name,
-      searchRunId: row.search_run_id
+      searchRunId: row.search_run_id,
+      sourceName: row.source_name
     }));
   }
 
@@ -64,6 +69,7 @@ export class PriceHistoryRepository {
     period: "day" | "week" | "month";
     startAt: string;
     endAt: string;
+    sourceName?: string | null;
   }): Promise<PeriodMinimumPriceEntry[]> {
     const periodExpression = this.periodExpression(input.period);
 
@@ -71,6 +77,7 @@ export class PriceHistoryRepository {
       WITH candidate_items AS (
         SELECT
           ${sql.raw(periodExpression)} AS period_start,
+          source_name,
           captured_at,
           product_title,
           canonical_url,
@@ -82,10 +89,12 @@ export class PriceHistoryRepository {
         WHERE tracked_product_id = ${input.trackedProductId}
           AND captured_at >= ${input.startAt}
           AND captured_at <= ${input.endAt}
+          ${input.sourceName ? sql`AND source_name = ${input.sourceName}` : sql``}
       ),
       ranked_items AS (
         SELECT
           period_start,
+          source_name,
           captured_at,
           product_title,
           canonical_url,
@@ -94,13 +103,14 @@ export class PriceHistoryRepository {
           seller_name,
           search_run_id,
           ROW_NUMBER() OVER (
-            PARTITION BY period_start
-            ORDER BY CAST(price_value AS NUMERIC) ASC, captured_at ASC, canonical_url ASC
+            PARTITION BY source_name, period_start
+            ORDER BY CAST(price_value AS NUMERIC) ASC, captured_at ASC, canonical_url ASC, search_run_id ASC
           ) AS row_number
         FROM candidate_items
       )
       SELECT
         period_start,
+        source_name,
         captured_at,
         product_title,
         canonical_url,
@@ -110,7 +120,7 @@ export class PriceHistoryRepository {
         search_run_id
       FROM ranked_items
       WHERE row_number = 1
-      ORDER BY period_start ASC
+      ORDER BY source_name ASC, period_start ASC
     `);
 
     return rows.rows.map((row: PeriodMinimumRow) => ({
@@ -121,7 +131,8 @@ export class PriceHistoryRepository {
       price: row.price_value,
       currency: row.currency,
       sellerName: row.seller_name,
-      searchRunId: row.search_run_id
+      searchRunId: row.search_run_id,
+      sourceName: row.source_name
     }));
   }
 

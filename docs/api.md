@@ -9,6 +9,7 @@ Tracked products are source-agnostic.
 - Every tracked product is collected from every registered source adapter in the project.
 - A scraped item matches only when its title contains all tracked search terms, case-insensitively.
 - Collection cadence is global and is not configured per tracked product.
+- `all` is a synthetic API filter value. It is not stored as a real source.
 
 ## Endpoints
 
@@ -27,6 +28,34 @@ Returns:
 ```json
 {"status":"ok"}
 ```
+
+### `GET /sources`
+
+Returns the canonical source catalog used by source-aware filters and chart series.
+
+```json
+{
+  "sources": [
+    {
+      "source_name": "kabum",
+      "source_label": "KaBuM!",
+      "active": true
+    },
+    {
+      "source_name": "amazon",
+      "source_label": "Amazon",
+      "active": false
+    }
+  ]
+}
+```
+
+Notes:
+
+- `source_name` is the stable machine identifier used in query params and response metadata.
+- `source_label` is the UI-facing label.
+- `active=true` means the source is currently enabled in runtime configuration.
+- `all` is not returned here because it is only a synthetic frontend filter.
 
 ### `GET /tracked-products`
 
@@ -155,6 +184,7 @@ Query params:
 - `offset` defaults to `0`.
 - `start_at` optional. Accepts `YYYY-MM-DD` or an ISO 8601 datetime.
 - `end_at` optional. Accepts `YYYY-MM-DD` or an ISO 8601 datetime.
+- `source` optional. Defaults to `all`. Accepts `all` or a valid `source_name`.
 
 Returns a paginated history window:
 
@@ -162,6 +192,7 @@ Returns a paginated history window:
 {
   "product_id": "0d95d62b8f72457d9cd8d5d2c0f7b62f",
   "product_title": "RX 9070 XT",
+  "source_filter": "all",
   "limit": 100,
   "offset": 0,
   "has_more": true,
@@ -176,7 +207,9 @@ Returns a paginated history window:
       "price": "5499.99",
       "currency": "BRL",
       "seller_name": "KaBuM!",
-      "search_run_id": "23df7f417d9147ed86c57018de93f6c9"
+      "search_run_id": "23df7f417d9147ed86c57018de93f6c9",
+      "source_name": "kabum",
+      "source_label": "KaBuM!"
     }
   ]
 }
@@ -185,8 +218,10 @@ Returns a paginated history window:
 Notes:
 
 - `items` are ordered by `captured_at` descending, then price ascending within the same capture timestamp.
+- Source filtering is applied before pagination.
 - Omitting `start_at` and `end_at` returns the full saved history.
 - If `start_at` or `end_at` is sent as a date only, the API expands it to the full UTC day boundary.
+- Unknown `source` values return `400`.
 
 ### `GET /price-history/minimums`
 
@@ -197,28 +232,51 @@ Query params:
 - `period` accepted as a legacy alias for `granularity`.
 - `start_at` required. Accepts `YYYY-MM-DD` or an ISO 8601 datetime.
 - `end_at` required. Accepts `YYYY-MM-DD` or an ISO 8601 datetime.
+- `source` optional. Defaults to `all`. Accepts `all` or a valid `source_name`.
 
-Returns the lowest saved price found in each period inside the requested range:
+Returns source-aware minimum series inside the requested range:
 
 ```json
 {
   "product_id": "0d95d62b8f72457d9cd8d5d2c0f7b62f",
-  "product_title": "Placa de Video Sapphire Pulse Radeon RX 9070 XT 16GB",
+  "product_title": "RX 9070 XT Sapphire",
   "granularity": "week",
   "period": "week",
   "start_at": "2026-03-01T00:00:00+00:00",
   "end_at": "2026-03-31T23:59:59.999999+00:00",
+  "source_filter": "all",
+  "series": [
+    {
+      "source_name": "kabum",
+      "source_label": "KaBuM!",
+      "items": [
+        {
+          "period_start": "2026-03-02T00:00:00+00:00",
+          "captured_at": "2026-03-04T12:00:00+00:00",
+          "product_title": "Placa de Video Sapphire Pulse Radeon RX 9070 XT 16GB",
+          "canonical_url": "https://www.kabum.com.br/produto/1/rx-9070-xt",
+          "price": "5499.99",
+          "currency": "BRL",
+          "seller_name": "KaBuM!",
+          "search_run_id": "23df7f417d9147ed86c57018de93f6c9",
+          "source_name": "kabum",
+          "source_label": "KaBuM!"
+        }
+      ]
+    }
+  ],
   "items": [
     {
       "period_start": "2026-03-02T00:00:00+00:00",
       "captured_at": "2026-03-04T12:00:00+00:00",
       "product_title": "Placa de Video Sapphire Pulse Radeon RX 9070 XT 16GB",
-      "source_product_title": "Placa de Video Sapphire Pulse Radeon RX 9070 XT 16GB OC Triple Fan",
       "canonical_url": "https://www.kabum.com.br/produto/1/rx-9070-xt",
       "price": "5499.99",
       "currency": "BRL",
       "seller_name": "KaBuM!",
-      "search_run_id": "23df7f417d9147ed86c57018de93f6c9"
+      "search_run_id": "23df7f417d9147ed86c57018de93f6c9",
+      "source_name": "kabum",
+      "source_label": "KaBuM!"
     }
   ]
 }
@@ -226,12 +284,16 @@ Returns the lowest saved price found in each period inside the requested range:
 
 Notes:
 
-- `items` are ordered ascending by `period_start`.
-- `product_title` now reflects the tracked product title stored in the products table.
-- `source_product_title` keeps the original scraped listing title for reference.
+- `source=all` means separate per-source series, not one merged cheapest line.
+- `series` is the primary response shape for dashboards.
+- `items` is kept as a temporary flat legacy field for compatibility.
+- `source=kabum` returns one source series. If the source is valid but has no data in range, that series has an empty `items` array.
+- When `source=all`, only sources with data in range are returned in `series`.
+- Each item `product_title` is the scraped source listing title.
 - `week` buckets start on Monday at `00:00:00+00:00`.
 - If `start_at` or `end_at` is sent as a date only, the API expands it to the full UTC day boundary.
-- Empty ranges return `"items": []`.
+- Unknown `source` values return `400`.
+- Empty ranges return `"items": []` and, for source-specific requests, one empty `series` entry.
 - Browser clients may send an `OPTIONS` preflight first; API routes should answer that preflight and reflect any `Access-Control-Request-Headers` values in `Access-Control-Allow-Headers`.
 
 ### `GET /search-runs`

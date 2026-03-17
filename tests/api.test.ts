@@ -15,24 +15,91 @@ type RuntimeApp = FastifyInstance & {
   };
 };
 
+type TestDatabase = Awaited<ReturnType<typeof createTestDatabaseServices>>;
+
+async function createTestApp(databaseUrl: string, enabledSources: string[] = []): Promise<FastifyInstance> {
+  return createApp({
+    host: "127.0.0.1",
+    port: 8080,
+    scrapper: {
+      databaseUrl,
+      timeoutSeconds: 1,
+      maxRetries: 0,
+      retryBackoffSeconds: 0,
+      requestDelaySeconds: 0,
+      logLevel: "silent",
+      userAgent: "test",
+      intervalSeconds: 21600,
+      enabledSources
+    }
+  });
+}
+
+async function persistSearchItem(input: {
+  database: TestDatabase;
+  trackedProductId: string;
+  sourceName: "kabum" | "amazon";
+  capturedAt: string;
+  price: string;
+  productKey: string;
+  productTitle?: string;
+  sellerName?: string;
+}) {
+  const sourceConfig =
+    input.sourceName === "kabum"
+      ? {
+          searchUrl: "https://www.kabum.com.br/busca/rx-9070-xt",
+          sellerName: input.sellerName ?? "KaBuM!",
+          canonicalUrl: `https://www.kabum.com.br/produto/${input.productKey}/rx-9070-xt`
+        }
+      : {
+          searchUrl: "https://www.amazon.com.br/s?k=rx+9070+xt",
+          sellerName: input.sellerName ?? "Amazon",
+          canonicalUrl: `https://www.amazon.com.br/dp/${input.productKey}`
+        };
+
+  const searchRunId = await input.database.searchRuns.create({
+    trackedProductId: input.trackedProductId,
+    sourceName: input.sourceName,
+    searchTerm: "RX 9070 XT",
+    searchUrl: sourceConfig.searchUrl
+  });
+
+  const inserted = await input.database.searchRuns.persistItems({
+    searchRunId,
+    trackedProductId: input.trackedProductId,
+    items: [
+      {
+        source: input.sourceName,
+        title: input.productTitle ?? `Placa RX 9070 XT ${input.productKey}`,
+        canonicalUrl: sourceConfig.canonicalUrl,
+        price: input.price,
+        currency: "BRL",
+        availability: "in_stock",
+        isAvailable: true,
+        position: 1,
+        metadata: {
+          source_product_key: input.productKey,
+          seller_name: sourceConfig.sellerName
+        }
+      } satisfies SearchResultItem
+    ],
+    capturedAt: input.capturedAt
+  });
+
+  await input.database.searchRuns.finish(searchRunId, {
+    status: "succeeded",
+    totalResults: 10,
+    matchedResults: inserted,
+    pageCount: 1,
+    message: "lowest_prices_saved"
+  });
+}
+
 describeWithDatabase("api", () => {
   test("serves root, health, and tracked product CRUD", async () => {
     await withTemporaryDatabase(async (databaseUrl) => {
-      const app = await createApp({
-        host: "127.0.0.1",
-        port: 8080,
-        scrapper: {
-          databaseUrl,
-          timeoutSeconds: 1,
-          maxRetries: 0,
-          retryBackoffSeconds: 0,
-          requestDelaySeconds: 0,
-          logLevel: "silent",
-          userAgent: "test",
-          intervalSeconds: 21600,
-          enabledSources: []
-        }
-      });
+      const app = await createTestApp(databaseUrl);
 
       try {
         const rootResponse = await app.inject({ method: "GET", url: "/" });
@@ -89,21 +156,7 @@ describeWithDatabase("api", () => {
 
   test("serves OpenAPI JSON and Swagger UI", async () => {
     await withTemporaryDatabase(async (databaseUrl) => {
-      const app = await createApp({
-        host: "127.0.0.1",
-        port: 8080,
-        scrapper: {
-          databaseUrl,
-          timeoutSeconds: 1,
-          maxRetries: 0,
-          retryBackoffSeconds: 0,
-          requestDelaySeconds: 0,
-          logLevel: "silent",
-          userAgent: "test",
-          intervalSeconds: 21600,
-          enabledSources: []
-        }
-      });
+      const app = await createTestApp(databaseUrl);
 
       try {
         const openApiResponse = await app.inject({ method: "GET", url: "/openapi.json" });
@@ -119,6 +172,7 @@ describeWithDatabase("api", () => {
         });
         expect(openApiResponse.json().paths).toMatchObject({
           "/tracked-products": expect.any(Object),
+          "/sources": expect.any(Object),
           "/price-history/minimums": expect.any(Object),
           "/search-runs": expect.any(Object)
         });
@@ -134,21 +188,7 @@ describeWithDatabase("api", () => {
 
   test("handles CORS preflight and restricts origins", async () => {
     await withTemporaryDatabase(async (databaseUrl) => {
-      const app = await createApp({
-        host: "127.0.0.1",
-        port: 8080,
-        scrapper: {
-          databaseUrl,
-          timeoutSeconds: 1,
-          maxRetries: 0,
-          retryBackoffSeconds: 0,
-          requestDelaySeconds: 0,
-          logLevel: "silent",
-          userAgent: "test",
-          intervalSeconds: 21600,
-          enabledSources: []
-        }
-      });
+      const app = await createTestApp(databaseUrl);
 
       try {
         const localhostPreflight = await app.inject({
@@ -195,24 +235,38 @@ describeWithDatabase("api", () => {
     });
   });
 
-  test("groups minimum prices by period", async () => {
+  test("lists canonical sources with labels and active state", async () => {
+    await withTemporaryDatabase(async (databaseUrl) => {
+      const app = await createTestApp(databaseUrl, ["kabum"]);
+
+      try {
+        const response = await app.inject({ method: "GET", url: "/sources" });
+
+        expect(response.statusCode).toBe(200);
+        expect(response.json()).toEqual({
+          sources: [
+            {
+              source_name: "kabum",
+              source_label: "KaBuM!",
+              active: true
+            },
+            {
+              source_name: "amazon",
+              source_label: "Amazon",
+              active: false
+            }
+          ]
+        });
+      } finally {
+        await (app as RuntimeApp).drStoneRuntime?.database.close();
+      }
+    });
+  });
+
+  test("filters tracked product history by source after applying the source filter", async () => {
     await withTemporaryDatabase(async (databaseUrl) => {
       const database = await createTestDatabaseServices(databaseUrl);
-      const app = await createApp({
-        host: "127.0.0.1",
-        port: 8080,
-        scrapper: {
-          databaseUrl,
-          timeoutSeconds: 1,
-          maxRetries: 0,
-          retryBackoffSeconds: 0,
-          requestDelaySeconds: 0,
-          logLevel: "silent",
-          userAgent: "test",
-          intervalSeconds: 21600,
-          enabledSources: []
-        }
-      });
+      const app = await createTestApp(databaseUrl, ["kabum", "amazon"]);
 
       try {
         const trackedProduct = await database.trackedProducts.create({
@@ -220,79 +274,300 @@ describeWithDatabase("api", () => {
           searchTerms: ["RX 9070 XT"]
         });
 
-        const persistItem = async (
-          capturedAt: string,
-          price: string,
-          productKey: string
-        ) => {
-          const searchRunId = await database.searchRuns.create({
-            trackedProductId: trackedProduct.id,
-            sourceName: "kabum",
-            searchTerm: "RX 9070 XT",
-            searchUrl: "https://www.kabum.com.br/busca/rx-9070-xt"
-          });
-          const inserted = await database.searchRuns.persistItems({
-            searchRunId,
-            trackedProductId: trackedProduct.id,
-            items: [
-              {
-                source: "kabum",
-                title: `Placa RX 9070 XT ${productKey}`,
-                canonicalUrl: `https://www.kabum.com.br/produto/${productKey}/rx-9070-xt`,
-                price,
-                currency: "BRL",
-                availability: "in_stock",
-                isAvailable: true,
-                position: 1,
-                metadata: {
-                  source_product_key: productKey,
-                  seller_name: "KaBuM!"
-                }
-              } satisfies SearchResultItem
-            ],
-            capturedAt
-          });
-          await database.searchRuns.finish(searchRunId, {
-            status: "succeeded",
-            totalResults: 10,
-            matchedResults: inserted,
-            pageCount: 1,
-            message: "lowest_prices_saved"
-          });
-        };
+        await persistSearchItem({
+          database,
+          trackedProductId: trackedProduct.id,
+          sourceName: "kabum",
+          capturedAt: "2026-03-02T08:00:00+00:00",
+          price: "6100.00",
+          productKey: "1"
+        });
+        await persistSearchItem({
+          database,
+          trackedProductId: trackedProduct.id,
+          sourceName: "amazon",
+          capturedAt: "2026-03-03T11:00:00+00:00",
+          price: "6000.00",
+          productKey: "B001"
+        });
+        await persistSearchItem({
+          database,
+          trackedProductId: trackedProduct.id,
+          sourceName: "kabum",
+          capturedAt: "2026-03-04T12:00:00+00:00",
+          price: "5800.00",
+          productKey: "2"
+        });
 
-        await persistItem("2026-03-02T08:00:00+00:00", "6100.00", "1");
-        await persistItem("2026-03-02T15:00:00+00:00", "5900.00", "2");
-        await persistItem("2026-03-04T12:00:00+00:00", "5800.00", "3");
-        await persistItem("2026-03-10T09:30:00+00:00", "5700.00", "4");
+        const allSourcesResponse = await app.inject({
+          method: "GET",
+          url: `/tracked-products/${trackedProduct.id}/history`,
+          query: {
+            source: "all",
+            limit: "2"
+          }
+        });
+        const kabumResponse = await app.inject({
+          method: "GET",
+          url: `/tracked-products/${trackedProduct.id}/history`,
+          query: {
+            source: "kabum",
+            limit: "10"
+          }
+        });
 
-        const response = await app.inject({
+        expect(allSourcesResponse.statusCode).toBe(200);
+        expect(allSourcesResponse.json()).toMatchObject({
+          product_id: trackedProduct.id,
+          product_title: "RX 9070 XT",
+          source_filter: "all",
+          limit: 2,
+          offset: 0,
+          has_more: true,
+          next_offset: 2
+        });
+        expect(
+          allSourcesResponse.json().items.map((item: { source_name: string; price: string }) => [
+            item.source_name,
+            item.price
+          ])
+        ).toEqual([
+          ["kabum", "5800.00"],
+          ["amazon", "6000.00"]
+        ]);
+        expect(allSourcesResponse.json().items[0]).toMatchObject({
+          source_name: "kabum",
+          source_label: "KaBuM!"
+        });
+
+        expect(kabumResponse.statusCode).toBe(200);
+        expect(kabumResponse.json()).toMatchObject({
+          product_id: trackedProduct.id,
+          source_filter: "kabum",
+          has_more: false,
+          next_offset: null
+        });
+        expect(
+          kabumResponse.json().items.map((item: { source_name: string; price: string }) => [
+            item.source_name,
+            item.price
+          ])
+        ).toEqual([
+          ["kabum", "5800.00"],
+          ["kabum", "6100.00"]
+        ]);
+      } finally {
+        await (app as RuntimeApp).drStoneRuntime?.database.close();
+        await database.close();
+      }
+    });
+  });
+
+  test("returns one minimum-price series per source and supports specific-source filtering", async () => {
+    await withTemporaryDatabase(async (databaseUrl) => {
+      const database = await createTestDatabaseServices(databaseUrl);
+      const app = await createTestApp(databaseUrl, ["kabum", "amazon"]);
+
+      try {
+        const trackedProduct = await database.trackedProducts.create({
+          productTitle: "RX 9070 XT",
+          searchTerms: ["RX 9070 XT"]
+        });
+
+        await persistSearchItem({
+          database,
+          trackedProductId: trackedProduct.id,
+          sourceName: "kabum",
+          capturedAt: "2026-03-02T08:00:00+00:00",
+          price: "6100.00",
+          productKey: "1"
+        });
+        await persistSearchItem({
+          database,
+          trackedProductId: trackedProduct.id,
+          sourceName: "kabum",
+          capturedAt: "2026-03-02T15:00:00+00:00",
+          price: "5900.00",
+          productKey: "2"
+        });
+        await persistSearchItem({
+          database,
+          trackedProductId: trackedProduct.id,
+          sourceName: "amazon",
+          capturedAt: "2026-03-03T11:00:00+00:00",
+          price: "6000.00",
+          productKey: "B001"
+        });
+        await persistSearchItem({
+          database,
+          trackedProductId: trackedProduct.id,
+          sourceName: "amazon",
+          capturedAt: "2026-03-04T09:00:00+00:00",
+          price: "5850.00",
+          productKey: "B002"
+        });
+        await persistSearchItem({
+          database,
+          trackedProductId: trackedProduct.id,
+          sourceName: "kabum",
+          capturedAt: "2026-03-10T09:30:00+00:00",
+          price: "5700.00",
+          productKey: "3"
+        });
+
+        const allSourcesResponse = await app.inject({
+          method: "GET",
+          url: "/price-history/minimums",
+          query: {
+            product_id: trackedProduct.id,
+            granularity: "week",
+            start_at: "2026-03-01",
+            end_at: "2026-03-31",
+            source: "all"
+          }
+        });
+        const amazonResponse = await app.inject({
           method: "GET",
           url: "/price-history/minimums",
           query: {
             product_id: trackedProduct.id,
             period: "week",
             start_at: "2026-03-01",
-            end_at: "2026-03-31"
+            end_at: "2026-03-31",
+            source: "amazon"
+          }
+        });
+        const emptyAmazonResponse = await app.inject({
+          method: "GET",
+          url: "/price-history/minimums",
+          query: {
+            product_id: trackedProduct.id,
+            granularity: "week",
+            start_at: "2026-03-10",
+            end_at: "2026-03-31",
+            source: "amazon"
           }
         });
 
-        expect(response.statusCode).toBe(200);
-        expect(response.json()).toMatchObject({
+        expect(allSourcesResponse.statusCode).toBe(200);
+        expect(allSourcesResponse.json()).toMatchObject({
           product_id: trackedProduct.id,
           product_title: "RX 9070 XT",
           granularity: "week",
-          period: "week"
+          period: "week",
+          source_filter: "all"
         });
         expect(
-          response.json().items.map((item: { period_start: string; price: string }) => [
-            item.period_start,
+          allSourcesResponse.json().series.map(
+            (series: {
+              source_name: string;
+              items: Array<{ period_start: string; price: string }>;
+            }) => [
+              series.source_name,
+              series.items.map((item) => [item.period_start, item.price])
+            ]
+          )
+        ).toEqual([
+          [
+            "amazon",
+            [["2026-03-02T00:00:00+00:00", "5850.00"]]
+          ],
+          [
+            "kabum",
+            [
+              ["2026-03-02T00:00:00+00:00", "5900.00"],
+              ["2026-03-09T00:00:00+00:00", "5700.00"]
+            ]
+          ]
+        ]);
+        expect(
+          allSourcesResponse.json().items.map((item: { source_name: string; price: string }) => [
+            item.source_name,
             item.price
           ])
         ).toEqual([
-          ["2026-03-02T00:00:00+00:00", "5800.00"],
-          ["2026-03-09T00:00:00+00:00", "5700.00"]
+          ["amazon", "5850.00"],
+          ["kabum", "5900.00"],
+          ["kabum", "5700.00"]
         ]);
+        expect(allSourcesResponse.json().series[0]).toMatchObject({
+          source_name: "amazon",
+          source_label: "Amazon"
+        });
+
+        expect(amazonResponse.statusCode).toBe(200);
+        expect(amazonResponse.json()).toMatchObject({
+          source_filter: "amazon"
+        });
+        expect(amazonResponse.json().series).toHaveLength(1);
+        expect(amazonResponse.json().series[0]).toMatchObject({
+          source_name: "amazon",
+          source_label: "Amazon"
+        });
+        expect(
+          amazonResponse.json().series[0].items.map((item: { period_start: string; price: string }) => [
+            item.period_start,
+            item.price
+          ])
+        ).toEqual([["2026-03-02T00:00:00+00:00", "5850.00"]]);
+
+        expect(emptyAmazonResponse.statusCode).toBe(200);
+        expect(emptyAmazonResponse.json()).toMatchObject({
+          source_filter: "amazon",
+          items: []
+        });
+        expect(emptyAmazonResponse.json().series).toEqual([
+          {
+            source_name: "amazon",
+            source_label: "Amazon",
+            items: []
+          }
+        ]);
+      } finally {
+        await (app as RuntimeApp).drStoneRuntime?.database.close();
+        await database.close();
+      }
+    });
+  });
+
+  test("rejects invalid source filters with 400", async () => {
+    await withTemporaryDatabase(async (databaseUrl) => {
+      const database = await createTestDatabaseServices(databaseUrl);
+      const app = await createTestApp(databaseUrl, ["kabum", "amazon"]);
+
+      try {
+        const trackedProduct = await database.trackedProducts.create({
+          productTitle: "RX 9070 XT",
+          searchTerms: ["RX 9070 XT"]
+        });
+
+        const historyResponse = await app.inject({
+          method: "GET",
+          url: `/tracked-products/${trackedProduct.id}/history`,
+          query: {
+            source: "terabyteshop"
+          }
+        });
+        const minimumsResponse = await app.inject({
+          method: "GET",
+          url: "/price-history/minimums",
+          query: {
+            product_id: trackedProduct.id,
+            granularity: "week",
+            start_at: "2026-03-01",
+            end_at: "2026-03-31",
+            source: "terabyteshop"
+          }
+        });
+
+        expect(historyResponse.statusCode).toBe(400);
+        expect(historyResponse.json()).toEqual({
+          error: "source must be `all` or a valid source_name."
+        });
+        expect(minimumsResponse.statusCode).toBe(400);
+        expect(minimumsResponse.json()).toEqual({
+          error: "source must be `all` or a valid source_name."
+        });
       } finally {
         await (app as RuntimeApp).drStoneRuntime?.database.close();
         await database.close();

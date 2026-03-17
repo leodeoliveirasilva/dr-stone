@@ -1,5 +1,7 @@
 import process from "node:process";
 
+import { normalizeConfiguredSourceNames } from "@dr-stone/database";
+
 import type { ScrapperSettings } from "./types.js";
 
 const DEFAULT_USER_AGENT =
@@ -12,12 +14,13 @@ export function loadScrapperSettings(overrides: Partial<ScrapperSettings> = {}):
   }
 
   const intervalSeconds = overrides.intervalSeconds ?? Number(process.env.INTERVAL_SECONDS ?? "21600");
-  const enabledSources =
+  const enabledSources = normalizeConfiguredSourceNames(
     overrides.enabledSources ??
-    String(process.env.DR_STONE_ENABLED_SOURCES ?? "kabum")
-      .split(",")
-      .map((value) => value.trim())
-      .filter(Boolean);
+      String(process.env.DR_STONE_ENABLED_SOURCES ?? "kabum")
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean)
+  );
 
   return {
     databaseUrl,

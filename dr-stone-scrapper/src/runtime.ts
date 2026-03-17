@@ -1,4 +1,8 @@
-import { applyMigrations, createDatabaseServices } from "@dr-stone/database";
+import {
+  applyMigrations,
+  createDatabaseServices,
+  normalizeConfiguredSourceNames
+} from "@dr-stone/database";
 
 import { HttpFetcher } from "./http/http-fetcher.js";
 import { AmazonSource } from "./sources/amazon/amazon-source.js";
@@ -16,7 +20,7 @@ export function buildSearchSources(
   settings: ScrapperSettings,
   logger: LoggerLike
 ): SearchSource[] {
-  const enabled = new Set(settings.enabledSources);
+  const enabled = new Set(normalizeConfiguredSourceNames(settings.enabledSources));
   const sources: SearchSource[] = [];
 
   if (enabled.has("kabum")) {

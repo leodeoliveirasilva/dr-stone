@@ -1,4 +1,8 @@
-import { applyMigrations, createDatabaseServices } from "@dr-stone/database";
+import {
+  applyMigrations,
+  createDatabaseServices,
+  listRegisteredSources
+} from "@dr-stone/database";
 import { SearchCollectionService, buildSearchSources, createLogger } from "@dr-stone/scrapper";
 
 import type { ApiSettings } from "../env.js";
@@ -16,6 +20,7 @@ export async function buildRuntime(settings: ApiSettings) {
   return {
     logger,
     database,
-    collectionService
+    collectionService,
+    sources: listRegisteredSources(settings.scrapper.enabledSources)
   };
 }
