@@ -19,7 +19,7 @@ describe("worker", () => {
     const service = new StubService([[{ tracked_product_id: "prod-1" }]]);
 
     await runWorkerLoop({
-      service: service as never,
+      collector: service as never,
       logger: createLogger("silent"),
       intervalSeconds: 21600,
       runOnce: true
@@ -38,7 +38,7 @@ describe("worker", () => {
 
     await expect(
       runWorkerLoop({
-        service: service as never,
+        collector: service as never,
         logger: createLogger("silent"),
         intervalSeconds: 30,
         sleepFn: async (milliseconds) => {

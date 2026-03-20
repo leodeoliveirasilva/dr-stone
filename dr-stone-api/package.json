@@ -15,6 +15,7 @@
     "@dr-stone/scrapper": "workspace:*",
     "@fastify/swagger": "^9.7.0",
     "@fastify/swagger-ui": "^5.2.5",
+    "dotenv": "^17.3.1",
     "fastify": "^5.2.1",
     "zod": "^3.24.2"
   }

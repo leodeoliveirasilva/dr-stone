@@ -25,6 +25,25 @@ corepack enable
 pnpm install --frozen-lockfile
 ```
 
+## Local Environment
+
+The API and worker auto-load the repository root `.env` file via `dotenv`.
+
+Recommended setup:
+
+```bash
+cp .env.example .env
+```
+
+Populate at least:
+
+- `DATABASE_URL`
+- `PROXY_SERVER`
+- `PROXY_USER`
+- `PROXY_PASSWORD`
+
+If any required proxy variable is missing, application boot fails immediately.
+
 ## Local Postgres
 
 Start Postgres for local development and tests:
@@ -46,31 +65,27 @@ pnpm test
 
 ## Run Locally
 
-Build the workspace first:
+With `.env` populated, build the workspace first:
 
 ```bash
-export DATABASE_URL=postgresql://dr_stone:dr_stone@127.0.0.1:15432/dr_stone_test
 pnpm build
 ```
 
 Start the API:
 
 ```bash
-export DATABASE_URL=postgresql://dr_stone:dr_stone@127.0.0.1:15432/dr_stone_test
 pnpm start:api
 ```
 
 Run the worker once:
 
 ```bash
-export DATABASE_URL=postgresql://dr_stone:dr_stone@127.0.0.1:15432/dr_stone_test
 pnpm worker:once
 ```
 
 Run the worker continuously:
 
 ```bash
-export DATABASE_URL=postgresql://dr_stone:dr_stone@127.0.0.1:15432/dr_stone_test
 pnpm start:worker
 ```
 

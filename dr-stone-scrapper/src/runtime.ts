@@ -28,7 +28,7 @@ export function buildSearchSources(
   }
 
   if (enabled.has("amazon")) {
-    sources.push(new AmazonSource(logger));
+    sources.push(new AmazonSource(settings, logger));
   }
 
   return sources;

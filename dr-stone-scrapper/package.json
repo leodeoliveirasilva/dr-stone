@@ -16,6 +16,8 @@
   "dependencies": {
     "@dr-stone/database": "workspace:*",
     "cheerio": "^1.0.0",
+    "dotenv": "^17.3.1",
+    "pg-boss": "^12.14.0",
     "pino": "^9.6.0",
     "playwright": "^1.54.2"
   }

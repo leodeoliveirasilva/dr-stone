@@ -4,6 +4,7 @@ import { createApp } from "./app.js";
 import { loadApiSettings } from "./env.js";
 
 async function main(): Promise<void> {
+  await import("dotenv/config");
   const settings = loadApiSettings();
   const app = await createApp(settings);
   await app.listen({

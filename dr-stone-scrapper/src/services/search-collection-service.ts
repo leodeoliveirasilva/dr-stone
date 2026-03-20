@@ -1,3 +1,5 @@
+import { setTimeout as sleep } from "node:timers/promises";
+
 import type { DatabaseServices, SearchCollectionResult, TrackedProduct } from "@dr-stone/database";
 import { buildSearchQuery } from "@dr-stone/database";
 
@@ -5,14 +7,30 @@ import { buildScrapeFailure } from "../failures.js";
 import { titleContainsAllTerms } from "../normalizers.js";
 import type { LoggerLike, SearchSource } from "../types.js";
 
+interface SearchCollectionServiceOptions {
+  sourceMinIntervalMsByName?: Partial<Record<string, number>>;
+  sleepFn?: (milliseconds: number) => Promise<void>;
+  now?: () => number;
+}
+
 export class SearchCollectionService {
   private readonly maxResultsPerRun = 4;
+  private readonly sourceMinIntervalMsByName: Partial<Record<string, number>>;
+  private readonly sleepFn: (milliseconds: number) => Promise<void>;
+  private readonly now: () => number;
+  private readonly sourceReservationChain = new Map<string, Promise<void>>();
+  private readonly sourceNextStartAtMs = new Map<string, number>();
 
   constructor(
     private readonly database: DatabaseServices,
     private readonly searchSources: SearchSource[],
-    private readonly logger: LoggerLike
-  ) {}
+    private readonly logger: LoggerLike,
+    options: SearchCollectionServiceOptions = {}
+  ) {
+    this.sourceMinIntervalMsByName = options.sourceMinIntervalMsByName ?? {};
+    this.sleepFn = options.sleepFn ?? sleep;
+    this.now = options.now ?? Date.now;
+  }
 
   async close(): Promise<void> {
     await Promise.all(this.searchSources.map((source) => source.close()));
@@ -62,8 +80,26 @@ export class SearchCollectionService {
         searchUrl
       });
       searchRunIds.push(searchRunId);
+      this.logger.info(
+        {
+          event: "search_source_run_created",
+          trackedProductId: trackedProduct.id,
+          productTitle: trackedProduct.productTitle,
+          searchRunId,
+          source: source.sourceName,
+          searchTerm: searchQuery,
+          searchUrl
+        },
+        "search_source_run_created"
+      );
 
       try {
+        await this.reserveSourceStartSlot(source, {
+          trackedProduct,
+          searchRunId,
+          searchTerm: searchQuery,
+          searchUrl
+        });
         const run = await source.search(searchQuery);
         const matchedItems = run.items
           .filter((item) => titleContainsAllTerms(trackedProduct.searchTerms, item.title))
@@ -176,5 +212,80 @@ export class SearchCollectionService {
   async collectDue(): Promise<SearchCollectionResult[]> {
     const trackedProducts = await this.database.trackedProducts.listDue();
     return Promise.all(trackedProducts.map((product) => this.collectTrackedProduct(product)));
+  }
+
+  private async reserveSourceStartSlot(
+    source: SearchSource,
+    input: {
+      trackedProduct: TrackedProduct;
+      searchRunId: string;
+      searchTerm: string;
+      searchUrl: string;
+    }
+  ): Promise<void> {
+    const minIntervalMs = Math.max(0, this.sourceMinIntervalMsByName[source.sourceName] ?? 0);
+    if (minIntervalMs === 0) {
+      return;
+    }
+
+    const previousReservation = this.sourceReservationChain.get(source.sourceName) ?? Promise.resolve();
+    let releaseReservation!: () => void;
+    const currentReservation = new Promise<void>((resolve) => {
+      releaseReservation = resolve;
+    });
+
+    this.sourceReservationChain.set(
+      source.sourceName,
+      previousReservation.then(() => currentReservation)
+    );
+
+    await previousReservation;
+
+    try {
+      const nowMs = this.now();
+      const nextAllowedAtMs = this.sourceNextStartAtMs.get(source.sourceName) ?? nowMs;
+      const waitMs = Math.max(0, nextAllowedAtMs - nowMs);
+
+      if (waitMs > 0) {
+        this.logger.info(
+          {
+            event: "search_source_rate_limit_wait_started",
+            trackedProductId: input.trackedProduct.id,
+            productTitle: input.trackedProduct.productTitle,
+            searchRunId: input.searchRunId,
+            source: source.sourceName,
+            strategy: source.strategy,
+            searchTerm: input.searchTerm,
+            searchUrl: input.searchUrl,
+            waitSeconds: waitMs / 1000,
+            scheduledStartAt: new Date(nowMs + waitMs).toISOString(),
+            minIntervalSeconds: minIntervalMs / 1000
+          },
+          "search_source_rate_limit_wait_started"
+        );
+        await this.sleepFn(waitMs);
+      }
+
+      const startedAtMs = this.now();
+      this.sourceNextStartAtMs.set(source.sourceName, startedAtMs + minIntervalMs);
+      this.logger.info(
+        {
+          event: "search_source_slot_acquired",
+          trackedProductId: input.trackedProduct.id,
+          productTitle: input.trackedProduct.productTitle,
+          searchRunId: input.searchRunId,
+          source: source.sourceName,
+          strategy: source.strategy,
+          searchTerm: input.searchTerm,
+          searchUrl: input.searchUrl,
+          startedAt: new Date(startedAtMs).toISOString(),
+          nextAllowedAt: new Date(startedAtMs + minIntervalMs).toISOString(),
+          minIntervalSeconds: minIntervalMs / 1000
+        },
+        "search_source_slot_acquired"
+      );
+    } finally {
+      releaseReservation();
+    }
   }
 }
