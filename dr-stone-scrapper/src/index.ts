@@ -4,7 +4,7 @@ export * from "./failures.js";
 export * from "./logger.js";
 export * from "./normalizers.js";
 export * from "./runtime.js";
-export * from "./services/amazon-job-scheduler.js";
+export * from "./services/collection-job-scheduler.js";
 export * from "./services/search-collection-service.js";
 export * from "./types.js";
 export * from "./worker.js";

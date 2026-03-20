@@ -1,6 +1,7 @@
 import {
   applyMigrations,
   createDatabaseServices,
+  listKnownSources,
   normalizeConfiguredSourceNames
 } from "@dr-stone/database";
 
@@ -18,9 +19,10 @@ export async function buildDatabaseServices(settings: ScrapperSettings) {
 
 export function buildSearchSources(
   settings: ScrapperSettings,
-  logger: LoggerLike
+  logger: LoggerLike,
+  sourceNames: readonly string[] = settings.enabledSources
 ): SearchSource[] {
-  const enabled = new Set(normalizeConfiguredSourceNames(settings.enabledSources));
+  const enabled = new Set(normalizeConfiguredSourceNames(sourceNames));
   const sources: SearchSource[] = [];
 
   if (enabled.has("kabum")) {
@@ -37,7 +39,21 @@ export function buildSearchSources(
 export function buildCollectionService(
   settings: ScrapperSettings,
   logger: LoggerLike,
+  database = createDatabaseServices(settings.databaseUrl),
+  sourceNames: readonly string[] = settings.enabledSources
+): SearchCollectionService {
+  return new SearchCollectionService(database, buildSearchSources(settings, logger, sourceNames), logger);
+}
+
+export function buildAllSourcesCollectionService(
+  settings: ScrapperSettings,
+  logger: LoggerLike,
   database = createDatabaseServices(settings.databaseUrl)
 ): SearchCollectionService {
-  return new SearchCollectionService(database, buildSearchSources(settings, logger), logger);
+  return buildCollectionService(
+    settings,
+    logger,
+    database,
+    listKnownSources().map((source) => source.sourceName)
+  );
 }

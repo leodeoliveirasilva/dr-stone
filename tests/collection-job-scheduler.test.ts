@@ -1,9 +1,9 @@
 import { describe, expect, test } from "vitest";
 
 import {
-  AMAZON_JOB_QUEUE,
-  AmazonJobScheduler
-} from "../dr-stone-scrapper/src/services/amazon-job-scheduler.js";
+  CollectionJobScheduler,
+  SEARCH_COLLECTION_JOB_QUEUE
+} from "../dr-stone-scrapper/src/services/collection-job-scheduler.js";
 import { createLogger } from "../dr-stone-scrapper/src/logger.js";
 
 class FakeBoss {
@@ -45,24 +45,23 @@ class FakeBoss {
   }
 }
 
-describe("amazon job scheduler", () => {
-  test("schedules tracked products 15 minutes apart", async () => {
+describe("collection job scheduler", () => {
+  test("enqueues one job per tracked product and source without delay splitting", async () => {
     const boss = new FakeBoss();
-    const scheduler = new AmazonJobScheduler(
+    const scheduler = new CollectionJobScheduler(
       {
         databaseUrl: "postgresql://test",
         timeoutSeconds: 15,
         maxRetries: 2,
         retryBackoffSeconds: 1,
         requestDelaySeconds: 0.5,
-        amazonMinIntervalSeconds: 900,
         proxyServer: "http://127.0.0.1:3128",
         proxyUsername: "proxyuser",
         proxyPassword: "proxy-password",
         logLevel: "silent",
         userAgent: "test",
         intervalSeconds: 21600,
-        enabledSources: ["amazon"]
+        enabledSources: ["kabum", "amazon"]
       },
       {
         trackedProducts: {
@@ -70,25 +69,15 @@ describe("amazon job scheduler", () => {
           getById: async () => null
         }
       } as never,
-      {
-        collectTrackedProduct: async () => ({
-          trackedProductId: "prod-1",
-          searchRunIds: [],
-          successfulRuns: 1,
-          failedRuns: 0,
-          totalResults: 1,
-          matchedResults: 1,
-          pageCount: 1
-        })
-      } as never,
       createLogger("silent"),
+      ["kabum", "amazon"],
       {
         boss,
         now: () => Date.parse("2026-03-19T18:00:00.000Z")
       }
     );
 
-    const summary = await scheduler.scheduleTrackedProducts([
+    const summary = await scheduler.enqueueTrackedProductsForSources([
       {
         id: "prod-1",
         productTitle: "RTX 5070 TI",
@@ -104,33 +93,30 @@ describe("amazon job scheduler", () => {
         active: true,
         createdAt: "2026-03-19T00:01:00.000Z",
         updatedAt: "2026-03-19T00:01:00.000Z"
-      },
-      {
-        id: "prod-3",
-        productTitle: "RTX 5090",
-        searchTerms: ["RTX", "5090"],
-        active: true,
-        createdAt: "2026-03-19T00:02:00.000Z",
-        updatedAt: "2026-03-19T00:02:00.000Z"
       }
     ]);
 
     expect(summary).toEqual({
-      scheduledCount: 3,
+      scheduledCount: 4,
       skippedCount: 0
     });
     expect(boss.jobs.map((job) => job.name)).toEqual([
-      AMAZON_JOB_QUEUE,
-      AMAZON_JOB_QUEUE,
-      AMAZON_JOB_QUEUE
+      SEARCH_COLLECTION_JOB_QUEUE,
+      SEARCH_COLLECTION_JOB_QUEUE,
+      SEARCH_COLLECTION_JOB_QUEUE,
+      SEARCH_COLLECTION_JOB_QUEUE
     ]);
     expect(boss.jobs.map((job) => job.date.toISOString())).toEqual([
       "2026-03-19T18:00:00.000Z",
-      "2026-03-19T18:15:00.000Z",
-      "2026-03-19T18:30:00.000Z"
+      "2026-03-19T18:00:00.000Z",
+      "2026-03-19T18:00:00.000Z",
+      "2026-03-19T18:00:00.000Z"
     ]);
-    expect(
-      boss.jobs.map((job) => job.options?.singletonKey)
-    ).toEqual(["prod-1", "prod-2", "prod-3"]);
+    expect(boss.jobs.map((job) => job.options?.singletonKey)).toEqual([
+      "prod-1:kabum",
+      "prod-1:amazon",
+      "prod-2:kabum",
+      "prod-2:amazon"
+    ]);
   });
 });

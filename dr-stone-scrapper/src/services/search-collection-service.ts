@@ -37,6 +37,17 @@ export class SearchCollectionService {
   }
 
   async collectTrackedProduct(trackedProduct: TrackedProduct): Promise<SearchCollectionResult> {
+    return this.collectTrackedProductForSourceNames(
+      trackedProduct,
+      this.searchSources.map((source) => source.sourceName)
+    );
+  }
+
+  async collectTrackedProductForSourceNames(
+    trackedProduct: TrackedProduct,
+    sourceNames: readonly string[]
+  ): Promise<SearchCollectionResult> {
+    const selectedSources = this.resolveSources(sourceNames);
     const searchQuery = buildSearchQuery(trackedProduct.searchTerms);
     const searchRunIds: string[] = [];
     let totalResults = 0;
@@ -53,13 +64,13 @@ export class SearchCollectionService {
         productTitle: trackedProduct.productTitle,
         searchTerms: trackedProduct.searchTerms,
         searchQuery,
-        sourceCount: this.searchSources.length,
-        enabledSources: this.searchSources.map((source) => source.sourceName)
+        sourceCount: selectedSources.length,
+        enabledSources: selectedSources.map((source) => source.sourceName)
       },
       "search_collection_started"
     );
 
-    for (const source of this.searchSources) {
+    for (const source of selectedSources) {
       const searchUrl = source.buildSearchUrl(searchQuery);
       this.logger.info(
         {
@@ -196,22 +207,24 @@ export class SearchCollectionService {
     return result;
   }
 
-  async collectAllActive(): Promise<SearchCollectionResult[]> {
-    const trackedProducts = await this.database.trackedProducts.list({ activeOnly: true });
-    this.logger.info(
-      {
-        event: "search_collection_cycle_started",
-        trackedProductCount: trackedProducts.length,
-        enabledSources: this.searchSources.map((source) => source.sourceName)
-      },
-      "search_collection_cycle_started"
-    );
-    return Promise.all(trackedProducts.map((product) => this.collectTrackedProduct(product)));
+  getSourceNames(): string[] {
+    return this.searchSources.map((source) => source.sourceName);
   }
 
-  async collectDue(): Promise<SearchCollectionResult[]> {
-    const trackedProducts = await this.database.trackedProducts.listDue();
-    return Promise.all(trackedProducts.map((product) => this.collectTrackedProduct(product)));
+  private resolveSources(sourceNames: readonly string[]): SearchSource[] {
+    const sourcesByName = new Map(this.searchSources.map((source) => [source.sourceName, source]));
+    const resolvedSources: SearchSource[] = [];
+
+    for (const sourceName of sourceNames) {
+      const source = sourcesByName.get(sourceName);
+      if (!source) {
+        throw new Error(`Unknown source configured for collection: ${sourceName}`);
+      }
+
+      resolvedSources.push(source);
+    }
+
+    return resolvedSources;
   }
 
   private async reserveSourceStartSlot(

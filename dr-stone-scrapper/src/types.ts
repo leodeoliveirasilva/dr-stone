@@ -22,7 +22,6 @@ export interface ScrapperSettings {
   maxRetries: number;
   retryBackoffSeconds: number;
   requestDelaySeconds: number;
-  amazonMinIntervalSeconds: number;
   proxyServer: string;
   proxyUsername: string;
   proxyPassword: string;

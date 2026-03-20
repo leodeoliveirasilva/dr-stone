@@ -6,11 +6,12 @@ import type { Job, SendOptions } from "pg-boss";
 import type { LoggerLike, ScrapperSettings } from "../types.js";
 import { SearchCollectionService } from "./search-collection-service.js";
 
-export const AMAZON_JOB_QUEUE = "amazon-search";
+export const SEARCH_COLLECTION_JOB_QUEUE = "search-collection";
 
-export interface AmazonSearchJobData {
+export interface SearchCollectionJobData {
   trackedProductId: string;
   productTitle: string;
+  sourceName: string;
   searchQuery: string;
   queuedAt: string;
   scheduledFor: string;
@@ -35,58 +36,62 @@ interface BossLike {
   ): Promise<string | null>;
 }
 
-export interface AmazonScheduleSummary {
+export interface CollectionScheduleSummary {
   scheduledCount: number;
   skippedCount: number;
 }
 
-export class AmazonJobScheduler {
+export class CollectionJobScheduler {
   private readonly boss: BossLike;
   private readonly queueName: string;
   private readonly now: () => number;
+  private readonly service?: SearchCollectionService;
   private workerId: string | null = null;
 
   constructor(
     private readonly settings: ScrapperSettings,
     private readonly database: DatabaseServices,
-    private readonly service: SearchCollectionService,
     private readonly logger: LoggerLike,
+    private readonly sourceNames: readonly string[],
     options: {
+      service?: SearchCollectionService;
       boss?: BossLike;
       queueName?: string;
       now?: () => number;
     } = {}
   ) {
+    this.service = options.service;
     this.boss = options.boss ?? new PgBoss(settings.databaseUrl);
-    this.queueName = options.queueName ?? AMAZON_JOB_QUEUE;
+    this.queueName = options.queueName ?? SEARCH_COLLECTION_JOB_QUEUE;
     this.now = options.now ?? Date.now;
 
     this.boss.on("error", (error) => {
       this.logger.error(
         {
-          event: "amazon_job_queue_error",
+          event: "collection_job_queue_error",
           queueName: this.queueName,
           errorType: error instanceof Error ? error.constructor.name : "UnknownError",
           errorMessage: error instanceof Error ? error.message : String(error)
         },
-        "amazon_job_queue_error"
+        "collection_job_queue_error"
       );
     });
 
     this.boss.on("warning", (warning) => {
       this.logger.warn(
         {
-          event: "amazon_job_queue_warning",
+          event: "collection_job_queue_warning",
           queueName: this.queueName,
           warning:
             warning && typeof warning === "object" ? JSON.stringify(warning) : String(warning)
         },
-        "amazon_job_queue_warning"
+        "collection_job_queue_warning"
       );
     });
   }
 
-  async start(): Promise<void> {
+  async start(options: { work?: boolean } = {}): Promise<void> {
+    const shouldStartWorker = options.work ?? Boolean(this.service);
     await this.boss.start();
     await this.boss.createQueue(this.queueName, {
       policy: "singleton",
@@ -95,7 +100,16 @@ export class AmazonJobScheduler {
       retryBackoff: this.settings.maxRetries > 1,
       expireInSeconds: Math.max(300, this.settings.timeoutSeconds * 6)
     });
-    this.workerId = await this.boss.work<AmazonSearchJobData>(
+
+    if (!shouldStartWorker) {
+      return;
+    }
+
+    if (!this.service) {
+      throw new Error("Collection worker cannot start without a collection service");
+    }
+
+    this.workerId = await this.boss.work<SearchCollectionJobData>(
       this.queueName,
       {
         pollingIntervalSeconds: 5
@@ -107,12 +121,11 @@ export class AmazonJobScheduler {
 
     this.logger.info(
       {
-        event: "amazon_job_worker_started",
+        event: "collection_job_worker_started",
         queueName: this.queueName,
-        workerId: this.workerId,
-        minIntervalSeconds: this.settings.amazonMinIntervalSeconds
+        workerId: this.workerId
       },
-      "amazon_job_worker_started"
+      "collection_job_worker_started"
     );
   }
 
@@ -128,91 +141,90 @@ export class AmazonJobScheduler {
     await this.boss.stop();
   }
 
-  async scheduleActiveTrackedProducts(): Promise<AmazonScheduleSummary> {
+  async enqueueActiveTrackedProducts(): Promise<CollectionScheduleSummary> {
     const trackedProducts = await this.database.trackedProducts.list({ activeOnly: true });
-    return this.scheduleTrackedProducts(trackedProducts);
+    return this.enqueueTrackedProductsForSources(trackedProducts);
   }
 
-  async scheduleTrackedProducts(
-    trackedProducts: TrackedProduct[]
-  ): Promise<AmazonScheduleSummary> {
+  async enqueueTrackedProductsForSources(
+    trackedProducts: TrackedProduct[],
+    sourceNames: readonly string[] = this.sourceNames
+  ): Promise<CollectionScheduleSummary> {
     let scheduledCount = 0;
     let skippedCount = 0;
-    const baseTime = this.now();
+    const scheduledFor = new Date(this.now());
     const sendOptions: SendOptions = {
       retryLimit: Math.max(0, this.settings.maxRetries),
       retryDelay: Math.max(1, Math.round(this.settings.retryBackoffSeconds)),
       retryBackoff: this.settings.maxRetries > 1,
       expireInSeconds: Math.max(300, this.settings.timeoutSeconds * 6),
-      singletonSeconds: Math.max(
-        this.settings.intervalSeconds,
-        this.settings.amazonMinIntervalSeconds
-      )
+      singletonSeconds: Math.max(1, this.settings.intervalSeconds)
     };
 
-    for (const [index, trackedProduct] of trackedProducts.entries()) {
-      const scheduledFor = new Date(
-        baseTime + index * this.settings.amazonMinIntervalSeconds * 1000
-      );
-      const payload: AmazonSearchJobData = {
-        trackedProductId: trackedProduct.id,
-        productTitle: trackedProduct.productTitle,
-        searchQuery: buildSearchQuery(trackedProduct.searchTerms),
-        queuedAt: new Date(baseTime).toISOString(),
-        scheduledFor: scheduledFor.toISOString()
-      };
-      const jobId = await this.boss.sendAfter(
-        this.queueName,
-        payload,
-        {
-          ...sendOptions,
-          singletonKey: trackedProduct.id
-        },
-        scheduledFor
-      );
+    for (const trackedProduct of trackedProducts) {
+      for (const sourceName of sourceNames) {
+        const payload: SearchCollectionJobData = {
+          trackedProductId: trackedProduct.id,
+          productTitle: trackedProduct.productTitle,
+          sourceName,
+          searchQuery: buildSearchQuery(trackedProduct.searchTerms),
+          queuedAt: scheduledFor.toISOString(),
+          scheduledFor: scheduledFor.toISOString()
+        };
+        const jobId = await this.boss.sendAfter(
+          this.queueName,
+          payload,
+          {
+            ...sendOptions,
+            singletonKey: `${trackedProduct.id}:${sourceName}`
+          },
+          scheduledFor
+        );
 
-      if (jobId) {
-        scheduledCount += 1;
-        this.logger.info(
-          {
-            event: "amazon_job_scheduled",
-            queueName: this.queueName,
-            jobId,
-            trackedProductId: trackedProduct.id,
-            productTitle: trackedProduct.productTitle,
-            searchQuery: payload.searchQuery,
-            scheduledFor: payload.scheduledFor,
-            delaySeconds: index * this.settings.amazonMinIntervalSeconds
-          },
-          "amazon_job_scheduled"
-        );
-      } else {
-        skippedCount += 1;
-        this.logger.info(
-          {
-            event: "amazon_job_schedule_skipped",
-            queueName: this.queueName,
-            trackedProductId: trackedProduct.id,
-            productTitle: trackedProduct.productTitle,
-            searchQuery: payload.searchQuery,
-            scheduledFor: payload.scheduledFor,
-            reason: "singleton_conflict"
-          },
-          "amazon_job_schedule_skipped"
-        );
+        if (jobId) {
+          scheduledCount += 1;
+          this.logger.info(
+            {
+              event: "collection_job_scheduled",
+              queueName: this.queueName,
+              jobId,
+              trackedProductId: trackedProduct.id,
+              productTitle: trackedProduct.productTitle,
+              sourceName,
+              searchQuery: payload.searchQuery,
+              scheduledFor: payload.scheduledFor
+            },
+            "collection_job_scheduled"
+          );
+        } else {
+          skippedCount += 1;
+          this.logger.info(
+            {
+              event: "collection_job_schedule_skipped",
+              queueName: this.queueName,
+              trackedProductId: trackedProduct.id,
+              productTitle: trackedProduct.productTitle,
+              sourceName,
+              searchQuery: payload.searchQuery,
+              scheduledFor: payload.scheduledFor,
+              reason: "singleton_conflict"
+            },
+            "collection_job_schedule_skipped"
+          );
+        }
       }
     }
 
     this.logger.info(
       {
-        event: "amazon_job_schedule_completed",
+        event: "collection_job_schedule_completed",
         queueName: this.queueName,
         trackedProductCount: trackedProducts.length,
+        sourceCount: sourceNames.length,
         scheduledCount,
-        skippedCount,
-        minIntervalSeconds: this.settings.amazonMinIntervalSeconds
+        skippedCount
       },
-      "amazon_job_schedule_completed"
+      "collection_job_schedule_completed"
     );
 
     return {
@@ -221,49 +233,57 @@ export class AmazonJobScheduler {
     };
   }
 
-  private async handleJob(job: Job<AmazonSearchJobData>): Promise<void> {
+  private async handleJob(job: Job<SearchCollectionJobData>): Promise<void> {
+    if (!this.service) {
+      throw new Error("Collection worker cannot process jobs without a collection service");
+    }
+
     const trackedProduct = await this.database.trackedProducts.getById(job.data.trackedProductId);
     if (!trackedProduct || !trackedProduct.active) {
       this.logger.warn(
         {
-          event: "amazon_job_skipped",
+          event: "collection_job_skipped",
           queueName: this.queueName,
           jobId: job.id,
           trackedProductId: job.data.trackedProductId,
           reason: trackedProduct ? "inactive_tracked_product" : "tracked_product_not_found"
         },
-        "amazon_job_skipped"
+        "collection_job_skipped"
       );
       return;
     }
 
     this.logger.info(
       {
-        event: "amazon_job_started",
+        event: "collection_job_started",
         queueName: this.queueName,
         jobId: job.id,
         trackedProductId: trackedProduct.id,
         productTitle: trackedProduct.productTitle,
+        sourceName: job.data.sourceName,
         searchQuery: buildSearchQuery(trackedProduct.searchTerms),
         scheduledFor: job.data.scheduledFor
       },
-      "amazon_job_started"
+      "collection_job_started"
     );
 
-    const result = await this.service.collectTrackedProduct(trackedProduct);
+    const result = await this.service.collectTrackedProductForSourceNames(trackedProduct, [
+      job.data.sourceName
+    ]);
     this.logger.info(
       {
-        event: "amazon_job_completed",
+        event: "collection_job_completed",
         queueName: this.queueName,
         jobId: job.id,
         trackedProductId: trackedProduct.id,
         productTitle: trackedProduct.productTitle,
+        sourceName: job.data.sourceName,
         successfulRuns: result.successfulRuns,
         failedRuns: result.failedRuns,
         totalResults: result.totalResults,
         matchedResults: result.matchedResults
       },
-      "amazon_job_completed"
+      "collection_job_completed"
     );
   }
 }

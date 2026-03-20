@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 
 import { createApp } from "../dr-stone-api/src/app.js";
@@ -6,14 +6,6 @@ import type { SearchResultItem } from "../dr-stone-database/src/index.js";
 import { createTestDatabaseServices, withTemporaryDatabase } from "./helpers/postgres.js";
 
 const describeWithDatabase = process.env.TEST_DATABASE_URL ? describe : describe.skip;
-
-type RuntimeApp = FastifyInstance & {
-  drStoneRuntime?: {
-    database: {
-      close: () => Promise<void>;
-    };
-  };
-};
 
 type TestDatabase = Awaited<ReturnType<typeof createTestDatabaseServices>>;
 
@@ -27,7 +19,6 @@ async function createTestApp(databaseUrl: string, enabledSources: string[] = [])
       maxRetries: 0,
       retryBackoffSeconds: 0,
       requestDelaySeconds: 0,
-      amazonMinIntervalSeconds: 900,
       proxyServer: "http://127.0.0.1:3128",
       proxyUsername: "proxyuser",
       proxyPassword: "proxy-password",
@@ -100,6 +91,85 @@ async function persistSearchItem(input: {
   });
 }
 
+describe("api manual collection queue", () => {
+  test("enqueues one job per source for the tracked product", async () => {
+    const trackedProduct = {
+      id: "tracked-1",
+      productTitle: "RX 9070 XT",
+      searchTerms: ["RX 9070 XT"],
+      active: true,
+      createdAt: "2026-03-19T00:00:00.000Z",
+      updatedAt: "2026-03-19T00:00:00.000Z"
+    };
+    const enqueueTrackedProductsForSources = vi.fn(async () => ({
+      scheduledCount: 2,
+      skippedCount: 0
+    }));
+    const stop = vi.fn(async () => {});
+    const closeDatabase = vi.fn(async () => {});
+    const app = await createApp(
+      {
+        host: "127.0.0.1",
+        port: 8080,
+        scrapper: {
+          databaseUrl: "postgresql://test",
+          timeoutSeconds: 1,
+          maxRetries: 0,
+          retryBackoffSeconds: 0,
+          requestDelaySeconds: 0,
+          proxyServer: "http://127.0.0.1:3128",
+          proxyUsername: "proxyuser",
+          proxyPassword: "proxy-password",
+          logLevel: "silent",
+          userAgent: "test",
+          intervalSeconds: 21600,
+          enabledSources: ["kabum", "amazon"]
+        }
+      },
+      {
+        runtime: {
+          logger: {
+            info: () => {},
+            warn: () => {},
+            error: () => {}
+          },
+          database: {
+            close: closeDatabase,
+            trackedProducts: {
+              getById: async () => trackedProduct
+            }
+          },
+          collectionJobScheduler: {
+            stop,
+            enqueueTrackedProductsForSources
+          },
+          sources: []
+        } as never
+      }
+    );
+
+    try {
+      const response = await app.inject({
+        method: "POST",
+        url: `/tracked-products/${trackedProduct.id}?action=collect`
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual({
+        tracked_product_id: trackedProduct.id,
+        enqueued_jobs: 2,
+        skipped_jobs: 0
+      });
+      expect(enqueueTrackedProductsForSources).toHaveBeenCalledWith([trackedProduct]);
+    } finally {
+      await app.close();
+    }
+
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(closeDatabase).toHaveBeenCalledTimes(1);
+  });
+});
+
 describeWithDatabase("api", () => {
   test("serves root, health, and tracked product CRUD", async () => {
     await withTemporaryDatabase(async (databaseUrl) => {
@@ -153,7 +223,7 @@ describeWithDatabase("api", () => {
         expect(deleteResponse.statusCode).toBe(204);
         expect(missingResponse.statusCode).toBe(404);
       } finally {
-        await (app as RuntimeApp).drStoneRuntime?.database.close();
+        await app.close();
       }
     });
   });
@@ -185,7 +255,7 @@ describeWithDatabase("api", () => {
         expect(docsResponse.headers["content-type"]).toContain("text/html");
         expect(docsResponse.body).toContain("Swagger UI");
       } finally {
-        await (app as RuntimeApp).drStoneRuntime?.database.close();
+        await app.close();
       }
     });
   });
@@ -234,7 +304,7 @@ describeWithDatabase("api", () => {
         expect(deniedPreflight.json()).toEqual({ error: "Origin not allowed" });
         expect(deniedPreflight.headers["access-control-allow-origin"]).toBeUndefined();
       } finally {
-        await (app as RuntimeApp).drStoneRuntime?.database.close();
+        await app.close();
       }
     });
   });
@@ -262,7 +332,7 @@ describeWithDatabase("api", () => {
           ]
         });
       } finally {
-        await (app as RuntimeApp).drStoneRuntime?.database.close();
+        await app.close();
       }
     });
   });
@@ -361,7 +431,7 @@ describeWithDatabase("api", () => {
           ["kabum", "6100.00"]
         ]);
       } finally {
-        await (app as RuntimeApp).drStoneRuntime?.database.close();
+        await app.close();
         await database.close();
       }
     });
@@ -528,7 +598,7 @@ describeWithDatabase("api", () => {
           }
         ]);
       } finally {
-        await (app as RuntimeApp).drStoneRuntime?.database.close();
+        await app.close();
         await database.close();
       }
     });
@@ -573,7 +643,7 @@ describeWithDatabase("api", () => {
           error: "source must be `all` or a valid source_name."
         });
       } finally {
-        await (app as RuntimeApp).drStoneRuntime?.database.close();
+        await app.close();
         await database.close();
       }
     });

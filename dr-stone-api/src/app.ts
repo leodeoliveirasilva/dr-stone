@@ -7,7 +7,7 @@ import Fastify, {
   type FastifyInstance,
   type FastifyReply
 } from "fastify";
-import type { RegisteredSource, SearchCollectionResult, TrackedProduct } from "@dr-stone/database";
+import type { RegisteredSource, TrackedProduct } from "@dr-stone/database";
 import {
   SOURCE_FILTER_ALL,
   getSourceDefinition,
@@ -45,8 +45,13 @@ const trackedProductSchema = z.object({
 const trackedProductPatchSchema = trackedProductSchema.partial();
 type TrackedProductPayload = z.infer<typeof trackedProductPatchSchema>;
 
-export async function createApp(settings: ApiSettings): Promise<FastifyInstance> {
-  const runtime = await buildRuntime(settings);
+export async function createApp(
+  settings: ApiSettings,
+  options: {
+    runtime?: Awaited<ReturnType<typeof buildRuntime>>;
+  } = {}
+): Promise<FastifyInstance> {
+  const runtime = options.runtime ?? (await buildRuntime(settings));
   const app = Fastify({ logger: false });
   Reflect.set(app, "drStoneRuntime", runtime);
 
@@ -93,7 +98,7 @@ export async function createApp(settings: ApiSettings): Promise<FastifyInstance>
   });
 
   app.addHook("onClose", async () => {
-    await runtime.collectionService.close();
+    await runtime.collectionJobScheduler.stop();
     await runtime.database.close();
   });
 
@@ -144,8 +149,7 @@ export async function createApp(settings: ApiSettings): Promise<FastifyInstance>
   });
 
   app.post("/collect-due", async () => {
-    const results = await runtime.collectionService.collectDue();
-    return results.map(toCollectionResultResponse);
+    return toCollectionEnqueueResponse(await runtime.collectionJobScheduler.enqueueActiveTrackedProducts());
   });
 
   app.get("/tracked-products/:trackedProductId", async (request) => {
@@ -175,8 +179,11 @@ export async function createApp(settings: ApiSettings): Promise<FastifyInstance>
           throw notFound(`Tracked product not found: ${trackedProductId}`);
         }
 
-        return toCollectionResultResponse(
-          await runtime.collectionService.collectTrackedProduct(trackedProduct)
+        return toCollectionEnqueueResponse(
+          await runtime.collectionJobScheduler.enqueueTrackedProductsForSources([trackedProduct]),
+          {
+            trackedProductId: trackedProduct.id
+          }
         );
       }
 
@@ -442,15 +449,19 @@ function toTrackedProductResponse(trackedProduct: TrackedProduct) {
   };
 }
 
-function toCollectionResultResponse(result: SearchCollectionResult) {
+function toCollectionEnqueueResponse(
+  result: {
+    scheduledCount: number;
+    skippedCount: number;
+  },
+  input: {
+    trackedProductId?: string;
+  } = {}
+) {
   return {
-    tracked_product_id: result.trackedProductId,
-    search_run_ids: result.searchRunIds,
-    successful_runs: result.successfulRuns,
-    failed_runs: result.failedRuns,
-    total_results: result.totalResults,
-    matched_results: result.matchedResults,
-    page_count: result.pageCount
+    tracked_product_id: input.trackedProductId ?? null,
+    enqueued_jobs: result.scheduledCount,
+    skipped_jobs: result.skippedCount
   };
 }
 

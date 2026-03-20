@@ -26,12 +26,9 @@ export function loadScrapperSettings(overrides: Partial<ScrapperSettings> = {}):
   }
 
   const intervalSeconds = overrides.intervalSeconds ?? Number(process.env.INTERVAL_SECONDS ?? "21600");
-  const amazonMinIntervalSeconds =
-    overrides.amazonMinIntervalSeconds ??
-    Number(process.env.AMAZON_MIN_INTERVAL_SECONDS ?? "900");
   const enabledSources = normalizeConfiguredSourceNames(
     overrides.enabledSources ??
-      String(process.env.DR_STONE_ENABLED_SOURCES ?? "kabum")
+      String(process.env.DR_STONE_ENABLED_SOURCES ?? "kabum,amazon")
         .split(",")
         .map((value) => value.trim())
         .filter(Boolean)
@@ -45,7 +42,6 @@ export function loadScrapperSettings(overrides: Partial<ScrapperSettings> = {}):
       overrides.retryBackoffSeconds ?? Number(process.env.RETRY_BACKOFF_SECONDS ?? "1"),
     requestDelaySeconds:
       overrides.requestDelaySeconds ?? Number(process.env.REQUEST_DELAY_SECONDS ?? "0.5"),
-    amazonMinIntervalSeconds,
     proxyServer,
     proxyUsername,
     proxyPassword,

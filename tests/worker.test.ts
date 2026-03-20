@@ -2,12 +2,17 @@ import { describe, expect, test } from "vitest";
 
 import { createLogger, main, runWorkerLoop } from "../dr-stone-scrapper/src/index.js";
 
-class StubService {
+class StubScheduler {
   calls = 0;
 
-  constructor(private readonly resultsPerRun: Array<Array<Record<string, string>>>) {}
+  constructor(
+    private readonly resultsPerRun: Array<{
+      scheduledCount: number;
+      skippedCount: number;
+    }>
+  ) {}
 
-  async collectAllActive() {
+  async scheduleQueuedWork() {
     const result = this.resultsPerRun[Math.min(this.calls, this.resultsPerRun.length - 1)];
     this.calls += 1;
     return result;
@@ -15,32 +20,32 @@ class StubService {
 }
 
 describe("worker", () => {
-  test("collects once when requested", async () => {
-    const service = new StubService([[{ tracked_product_id: "prod-1" }]]);
+  test("schedules once when requested", async () => {
+    const scheduler = new StubScheduler([{ scheduledCount: 1, skippedCount: 0 }]);
 
     await runWorkerLoop({
-      collector: service as never,
       logger: createLogger("silent"),
       intervalSeconds: 21600,
-      runOnce: true
+      runOnce: true,
+      scheduleQueuedWork: () => scheduler.scheduleQueuedWork()
     });
 
-    expect(service.calls).toBe(1);
+    expect(scheduler.calls).toBe(1);
   });
 
   test("sleeps remaining interval", async () => {
-    const service = new StubService([
-      [{ tracked_product_id: "prod-1" }],
-      [{ tracked_product_id: "prod-2" }]
+    const scheduler = new StubScheduler([
+      { scheduledCount: 1, skippedCount: 0 },
+      { scheduledCount: 1, skippedCount: 0 }
     ]);
     const sleepCalls: number[] = [];
     const nowValues = [100_000, 112_500];
 
     await expect(
       runWorkerLoop({
-        collector: service as never,
         logger: createLogger("silent"),
         intervalSeconds: 30,
+        scheduleQueuedWork: () => scheduler.scheduleQueuedWork(),
         sleepFn: async (milliseconds) => {
           sleepCalls.push(milliseconds);
           throw new Error("stop loop");
@@ -49,7 +54,7 @@ describe("worker", () => {
       })
     ).rejects.toThrow("stop loop");
 
-    expect(service.calls).toBe(1);
+    expect(scheduler.calls).toBe(1);
     expect(sleepCalls).toEqual([17_500]);
   });
 
