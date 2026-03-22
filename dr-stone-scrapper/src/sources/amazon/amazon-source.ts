@@ -3,6 +3,7 @@ import type { Browser, Page } from "playwright";
 
 import { FetchError } from "../../errors.js";
 import { normalizeAvailability, normalizeCurrency, normalizePrice } from "../../normalizers.js";
+import { buildBrowserLaunchOptions, createStealthBrowserContext } from "../../browser/playwright.js";
 import type { LoggerLike, ScrapperSettings, SearchSource } from "../../types.js";
 
 interface AmazonPageDiagnostics {
@@ -25,7 +26,7 @@ export class AmazonSource implements SearchSource {
   constructor(
     private readonly settings: Pick<
       ScrapperSettings,
-      "proxyServer" | "proxyUsername" | "proxyPassword"
+      "proxyServer" | "proxyUsername" | "proxyPassword" | "userAgent"
     >,
     private readonly logger: LoggerLike
   ) {}
@@ -38,23 +39,9 @@ export class AmazonSource implements SearchSource {
 
   async search(searchTerm: string): Promise<SearchRunResult> {
     const { chromium } = await import("playwright");
-    this.browserPromise ??= chromium.launch({
-      headless: true,
-      proxy: this.settings.proxyServer
-        ? {
-            server: this.settings.proxyServer,
-            username: this.settings.proxyUsername ?? undefined,
-            password: this.settings.proxyPassword ?? undefined
-          }
-        : undefined
-    });
+    this.browserPromise ??= chromium.launch(buildBrowserLaunchOptions(this.settings));
     const browser = await this.browserPromise;
-    const context = await browser.newContext({
-      locale: "pt-BR",
-      extraHTTPHeaders: {
-        "accept-language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7"
-      }
-    });
+    const context = await createStealthBrowserContext(browser, this.settings);
     const searchUrl = this.buildSearchUrl(searchTerm);
     let page: Page | null = null;
     let responseStatus: number | null = null;

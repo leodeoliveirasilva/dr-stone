@@ -1,6 +1,7 @@
 import type { SearchRunResult, SearchResultItem } from "@dr-stone/database";
 import type { Browser, BrowserContext, Page } from "playwright";
 
+import { buildBrowserLaunchOptions, createStealthBrowserContext } from "../../browser/playwright.js";
 import { FetchError } from "../../errors.js";
 import type { LoggerLike, ScrapperSettings, SearchSource } from "../../types.js";
 import {
@@ -44,6 +45,8 @@ interface PichauSearchRouteOutcome {
   diagnostics: PichauPageDiagnostics;
 }
 
+const MAX_ROUTE_ATTEMPTS = 3;
+
 export class PichauSource implements SearchSource {
   readonly sourceName = "pichau";
   readonly strategy = "browser" as const;
@@ -52,7 +55,7 @@ export class PichauSource implements SearchSource {
   constructor(
     private readonly settings: Pick<
       ScrapperSettings,
-      "proxyServer" | "proxyUsername" | "proxyPassword"
+      "proxyServer" | "proxyUsername" | "proxyPassword" | "userAgent"
     >,
     private readonly logger: LoggerLike
   ) {}
@@ -63,108 +66,142 @@ export class PichauSource implements SearchSource {
 
   async search(searchTerm: string): Promise<SearchRunResult> {
     const { chromium } = await import("playwright");
-    this.browserPromise ??= chromium.launch({
-      headless: true,
-      proxy: this.settings.proxyServer
-        ? {
-            server: this.settings.proxyServer,
-            username: this.settings.proxyUsername ?? undefined,
-            password: this.settings.proxyPassword ?? undefined
-          }
-        : undefined
-    });
+    this.browserPromise ??= chromium.launch(buildBrowserLaunchOptions(this.settings));
 
     const browser = await this.browserPromise;
-    const context = await browser.newContext({
-      locale: "pt-BR",
-      extraHTTPHeaders: {
-        "accept-language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7"
-      }
-    });
-
     const candidateSearchUrls = buildPichauSearchUrls(searchTerm);
     let bestDiagnostics: PichauPageDiagnostics | null = null;
+    let lastRouteError: unknown = null;
 
-    try {
-      for (const candidateSearchUrl of candidateSearchUrls) {
-        const outcome = await this.trySearchRoute(context, candidateSearchUrl);
-        const attempt = outcome.attempt;
-        bestDiagnostics = outcome.diagnostics;
+    for (const candidateSearchUrl of candidateSearchUrls) {
+      for (let routeAttempt = 1; routeAttempt <= MAX_ROUTE_ATTEMPTS; routeAttempt += 1) {
+        const context = await createStealthBrowserContext(browser, this.settings);
 
-        if (!attempt) {
-          continue;
-        }
+        try {
+          const outcome = await this.trySearchRoute(context, candidateSearchUrl);
+          const attempt = outcome.attempt;
+          bestDiagnostics = outcome.diagnostics;
 
-        const result: SearchRunResult = {
-          source: this.sourceName,
-          searchTerm,
-          resolvedUrl: attempt.resolvedUrl,
-          totalResults: attempt.items.length,
-          pageCount: attempt.pageCount,
-          items: attempt.items,
-          fetchedAt: new Date().toISOString(),
-          metadata: {
-            searchUrl: attempt.routeUrl,
-            responseStatus: attempt.diagnostics.responseStatus,
-            pageTitle: attempt.diagnostics.pageTitle,
-            itemCount: attempt.diagnostics.itemCount,
-            totalPages: attempt.diagnostics.totalPages,
-            challengeDetected: attempt.diagnostics.challengeDetected,
-            cloudflareDetected: attempt.diagnostics.cloudflareDetected,
-            maintenanceTitleDetected: attempt.diagnostics.maintenanceTitleDetected,
-            proxyConfigured: Boolean(this.settings.proxyServer)
+          if (!attempt) {
+            if (!this.shouldRetryRoute(bestDiagnostics, routeAttempt)) {
+              break;
+            }
+
+            this.logger.warn(
+              {
+                event: "search_source_route_retry_scheduled",
+                source: this.sourceName,
+                searchTerm,
+                routeUrl: candidateSearchUrl,
+                routeAttempt,
+                maxRouteAttempts: MAX_ROUTE_ATTEMPTS,
+                responseStatus: bestDiagnostics.responseStatus,
+                pageTitle: bestDiagnostics.pageTitle,
+                challengeDetected: bestDiagnostics.challengeDetected
+              },
+              "search_source_route_retry_scheduled"
+            );
+            continue;
           }
-        };
 
-        this.logger.info(
-          {
-            event: "search_scrape_succeeded",
+          const result: SearchRunResult = {
             source: this.sourceName,
             searchTerm,
-            resolvedUrl: result.resolvedUrl,
-            totalResults: result.totalResults,
-            pageCount: result.pageCount,
-            itemCount: result.items.length,
-            responseStatus: attempt.diagnostics.responseStatus,
-            pageTitle: attempt.diagnostics.pageTitle,
-            challengeDetected: attempt.diagnostics.challengeDetected,
-            proxyConfigured: Boolean(this.settings.proxyServer)
-          },
-          "search_scrape_succeeded"
-        );
+            resolvedUrl: attempt.resolvedUrl,
+            totalResults: attempt.items.length,
+            pageCount: attempt.pageCount,
+            items: attempt.items,
+            fetchedAt: new Date().toISOString(),
+            metadata: {
+              searchUrl: attempt.routeUrl,
+              responseStatus: attempt.diagnostics.responseStatus,
+              pageTitle: attempt.diagnostics.pageTitle,
+              itemCount: attempt.diagnostics.itemCount,
+              totalPages: attempt.diagnostics.totalPages,
+              challengeDetected: attempt.diagnostics.challengeDetected,
+              cloudflareDetected: attempt.diagnostics.cloudflareDetected,
+              maintenanceTitleDetected: attempt.diagnostics.maintenanceTitleDetected,
+              proxyConfigured: Boolean(this.settings.proxyServer)
+            }
+          };
 
-        return result;
-      }
+          this.logger.info(
+            {
+              event: "search_scrape_succeeded",
+              source: this.sourceName,
+              searchTerm,
+              resolvedUrl: result.resolvedUrl,
+              totalResults: result.totalResults,
+              pageCount: result.pageCount,
+              itemCount: result.items.length,
+              responseStatus: attempt.diagnostics.responseStatus,
+              pageTitle: attempt.diagnostics.pageTitle,
+              challengeDetected: attempt.diagnostics.challengeDetected,
+              proxyConfigured: Boolean(this.settings.proxyServer),
+              routeAttempt
+            },
+            "search_scrape_succeeded"
+          );
 
-      const errorCode =
-        bestDiagnostics?.challengeDetected === true
-          ? "pichau_challenge_detected"
-          : "pichau_search_failed";
-      throw new FetchError(this.buildFailureMessage(errorCode, bestDiagnostics), {
-        code: errorCode,
-        retriable: true,
-        statusCode: bestDiagnostics?.responseStatus ?? undefined,
-        url: candidateSearchUrls[0],
-        finalUrl: bestDiagnostics?.finalUrl ?? undefined,
-        details: {
-          searchTerm,
-          attemptedUrls: candidateSearchUrls,
-          responseStatus: bestDiagnostics?.responseStatus,
-          finalUrl: bestDiagnostics?.finalUrl,
-          pageTitle: bestDiagnostics?.pageTitle,
-          itemCount: bestDiagnostics?.itemCount ?? 0,
-          totalPages: bestDiagnostics?.totalPages ?? 0,
-          challengeDetected: bestDiagnostics?.challengeDetected ?? false,
-          challengeTitleDetected: bestDiagnostics?.challengeTitleDetected ?? false,
-          cloudflareDetected: bestDiagnostics?.cloudflareDetected ?? false,
-          maintenanceTitleDetected: bestDiagnostics?.maintenanceTitleDetected ?? false,
-          bodyTextSnippet: bestDiagnostics?.bodyTextSnippet,
-          proxyConfigured: Boolean(this.settings.proxyServer)
+          return result;
+        } catch (error) {
+          lastRouteError = error;
+          if (!this.shouldRetryRouteError(error, routeAttempt)) {
+            throw error;
+          }
+
+          const fetchError = error as FetchError;
+          this.logger.warn(
+            {
+              event: "search_source_route_retry_scheduled",
+              source: this.sourceName,
+              searchTerm,
+              routeUrl: candidateSearchUrl,
+              routeAttempt,
+              maxRouteAttempts: MAX_ROUTE_ATTEMPTS,
+              errorCode: fetchError.code,
+              responseStatus: fetchError.statusCode ?? null,
+              pageTitle:
+                typeof fetchError.details.pageTitle === "string" ? fetchError.details.pageTitle : null
+            },
+            "search_source_route_retry_scheduled"
+          );
+        } finally {
+          await context.close();
         }
-      });
-    } finally {
-      await context.close();
+      }
     }
+
+    if (lastRouteError instanceof FetchError) {
+      throw lastRouteError;
+    }
+
+    const errorCode =
+      bestDiagnostics?.challengeDetected === true
+        ? "pichau_challenge_detected"
+        : "pichau_search_failed";
+    throw new FetchError(this.buildFailureMessage(errorCode, bestDiagnostics), {
+      code: errorCode,
+      retriable: true,
+      statusCode: bestDiagnostics?.responseStatus ?? undefined,
+      url: candidateSearchUrls[0],
+      finalUrl: bestDiagnostics?.finalUrl ?? undefined,
+      details: {
+        searchTerm,
+        attemptedUrls: candidateSearchUrls,
+        responseStatus: bestDiagnostics?.responseStatus,
+        finalUrl: bestDiagnostics?.finalUrl,
+        pageTitle: bestDiagnostics?.pageTitle,
+        itemCount: bestDiagnostics?.itemCount ?? 0,
+        totalPages: bestDiagnostics?.totalPages ?? 0,
+        challengeDetected: bestDiagnostics?.challengeDetected ?? false,
+        challengeTitleDetected: bestDiagnostics?.challengeTitleDetected ?? false,
+        cloudflareDetected: bestDiagnostics?.cloudflareDetected ?? false,
+        maintenanceTitleDetected: bestDiagnostics?.maintenanceTitleDetected ?? false,
+        bodyTextSnippet: bestDiagnostics?.bodyTextSnippet,
+        proxyConfigured: Boolean(this.settings.proxyServer)
+      }
+    });
   }
 
   async close(): Promise<void> {
@@ -411,5 +448,24 @@ export class PichauSource implements SearchSource {
     } catch {
       return null;
     }
+  }
+
+  private shouldRetryRoute(
+    diagnostics: Pick<PichauPageDiagnostics, "challengeDetected" | "responseStatus">,
+    routeAttempt: number
+  ): boolean {
+    return (
+      routeAttempt < MAX_ROUTE_ATTEMPTS &&
+      (diagnostics.challengeDetected || diagnostics.responseStatus === 403)
+    );
+  }
+
+  private shouldRetryRouteError(error: unknown, routeAttempt: number): boolean {
+    return (
+      routeAttempt < MAX_ROUTE_ATTEMPTS &&
+      error instanceof FetchError &&
+      error.retriable &&
+      (error.code === "pichau_challenge_detected" || error.statusCode === 403)
+    );
   }
 }
