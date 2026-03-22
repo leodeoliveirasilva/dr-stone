@@ -90,7 +90,7 @@ Definition of done:
 Goal: run collection without manual commands.
 
 - [ ] Define scrape frequency rules by tracked search term
-- [x] Run each tracked search 4 times per day by default
+- [x] Run each tracked search every 12 hours by default
 - [ ] Add scheduled trigger support for scraping
 - [ ] Prevent overlapping or duplicate scheduled runs
 - [ ] Retry transient failures with explicit limits

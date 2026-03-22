@@ -25,7 +25,7 @@ describe("worker", () => {
 
     await runWorkerLoop({
       logger: createLogger("silent"),
-      intervalSeconds: 21600,
+      intervalSeconds: 43200,
       runOnce: true,
       scheduleQueuedWork: () => scheduler.scheduleQueuedWork()
     });

@@ -60,8 +60,8 @@ describe("collection job scheduler", () => {
         proxyPassword: "proxy-password",
         logLevel: "silent",
         userAgent: "test",
-        intervalSeconds: 21600,
-        enabledSources: ["kabum", "amazon"]
+        intervalSeconds: 43200,
+        enabledSources: ["kabum", "amazon", "pichau"]
       },
       {
         trackedProducts: {
@@ -70,7 +70,7 @@ describe("collection job scheduler", () => {
         }
       } as never,
       createLogger("silent"),
-      ["kabum", "amazon"],
+      ["kabum", "amazon", "pichau"],
       {
         boss,
         now: () => Date.parse("2026-03-19T18:00:00.000Z")
@@ -97,10 +97,12 @@ describe("collection job scheduler", () => {
     ]);
 
     expect(summary).toEqual({
-      scheduledCount: 4,
+      scheduledCount: 6,
       skippedCount: 0
     });
     expect(boss.jobs.map((job) => job.name)).toEqual([
+      SEARCH_COLLECTION_JOB_QUEUE,
+      SEARCH_COLLECTION_JOB_QUEUE,
       SEARCH_COLLECTION_JOB_QUEUE,
       SEARCH_COLLECTION_JOB_QUEUE,
       SEARCH_COLLECTION_JOB_QUEUE,
@@ -110,13 +112,17 @@ describe("collection job scheduler", () => {
       "2026-03-19T18:00:00.000Z",
       "2026-03-19T18:00:00.000Z",
       "2026-03-19T18:00:00.000Z",
+      "2026-03-19T18:00:00.000Z",
+      "2026-03-19T18:00:00.000Z",
       "2026-03-19T18:00:00.000Z"
     ]);
     expect(boss.jobs.map((job) => job.options?.singletonKey)).toEqual([
       "prod-1:kabum",
       "prod-1:amazon",
+      "prod-1:pichau",
       "prod-2:kabum",
-      "prod-2:amazon"
+      "prod-2:amazon",
+      "prod-2:pichau"
     ]);
   });
 });

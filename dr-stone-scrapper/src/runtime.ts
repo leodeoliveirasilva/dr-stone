@@ -8,6 +8,7 @@ import {
 import { HttpFetcher } from "./http/http-fetcher.js";
 import { AmazonSource } from "./sources/amazon/amazon-source.js";
 import { KabumSource } from "./sources/kabum/kabum-source.js";
+import { PichauSource } from "./sources/pichau/pichau-source.js";
 import type { LoggerLike, ScrapperSettings, SearchSource } from "./types.js";
 import { SearchCollectionService } from "./services/search-collection-service.js";
 
@@ -31,6 +32,10 @@ export function buildSearchSources(
 
   if (enabled.has("amazon")) {
     sources.push(new AmazonSource(settings, logger));
+  }
+
+  if (enabled.has("pichau")) {
+    sources.push(new PichauSource(settings, logger));
   }
 
   return sources;

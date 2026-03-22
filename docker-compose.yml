@@ -34,7 +34,7 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql://dr_stone:dr_stone@postgres:5432/dr_stone_test}
-      DR_STONE_ENABLED_SOURCES: ${DR_STONE_ENABLED_SOURCES:-kabum,amazon}
-      INTERVAL_SECONDS: ${INTERVAL_SECONDS:-21600}
+      DR_STONE_ENABLED_SOURCES: ${DR_STONE_ENABLED_SOURCES:-kabum,amazon,pichau}
+      INTERVAL_SECONDS: ${INTERVAL_SECONDS:-43200}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     command: ["node", "dr-stone-scrapper/dist/worker.js", "--run-once"]

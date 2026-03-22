@@ -8,6 +8,10 @@ const SOURCE_DEFINITIONS = [
   {
     sourceName: "amazon",
     sourceLabel: "Amazon"
+  },
+  {
+    sourceName: "pichau",
+    sourceLabel: "Pichau"
   }
 ] as const;
 

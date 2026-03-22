@@ -45,6 +45,11 @@ Returns the canonical source catalog used by source-aware filters and chart seri
       "source_name": "amazon",
       "source_label": "Amazon",
       "active": false
+    },
+    {
+      "source_name": "pichau",
+      "source_label": "Pichau",
+      "active": true
     }
   ]
 }

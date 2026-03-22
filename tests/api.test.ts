@@ -24,7 +24,7 @@ async function createTestApp(databaseUrl: string, enabledSources: string[] = [])
       proxyPassword: "proxy-password",
       logLevel: "silent",
       userAgent: "test",
-      intervalSeconds: 21600,
+      intervalSeconds: 43200,
       enabledSources
     }
   });
@@ -33,7 +33,7 @@ async function createTestApp(databaseUrl: string, enabledSources: string[] = [])
 async function persistSearchItem(input: {
   database: TestDatabase;
   trackedProductId: string;
-  sourceName: "kabum" | "amazon";
+  sourceName: "kabum" | "amazon" | "pichau";
   capturedAt: string;
   price: string;
   productKey: string;
@@ -47,11 +47,17 @@ async function persistSearchItem(input: {
           sellerName: input.sellerName ?? "KaBuM!",
           canonicalUrl: `https://www.kabum.com.br/produto/${input.productKey}/rx-9070-xt`
         }
-      : {
+      : input.sourceName === "amazon"
+        ? {
           searchUrl: "https://www.amazon.com.br/s?k=rx+9070+xt",
           sellerName: input.sellerName ?? "Amazon",
           canonicalUrl: `https://www.amazon.com.br/dp/${input.productKey}`
-        };
+        }
+        : {
+            searchUrl: "https://www.pichau.com.br/search?q=rx%209070%20xt",
+            sellerName: input.sellerName ?? "Pichau",
+            canonicalUrl: `https://www.pichau.com.br/${input.productKey}`
+          };
 
   const searchRunId = await input.database.searchRuns.create({
     trackedProductId: input.trackedProductId,
@@ -102,7 +108,7 @@ describe("api manual collection queue", () => {
       updatedAt: "2026-03-19T00:00:00.000Z"
     };
     const enqueueTrackedProductsForSources = vi.fn(async () => ({
-      scheduledCount: 2,
+      scheduledCount: 3,
       skippedCount: 0
     }));
     const stop = vi.fn(async () => {});
@@ -122,8 +128,8 @@ describe("api manual collection queue", () => {
           proxyPassword: "proxy-password",
           logLevel: "silent",
           userAgent: "test",
-          intervalSeconds: 21600,
-          enabledSources: ["kabum", "amazon"]
+          intervalSeconds: 43200,
+          enabledSources: ["kabum", "amazon", "pichau"]
         }
       },
       {
@@ -157,7 +163,7 @@ describe("api manual collection queue", () => {
       expect(response.statusCode).toBe(200);
       expect(response.json()).toEqual({
         tracked_product_id: trackedProduct.id,
-        enqueued_jobs: 2,
+        enqueued_jobs: 3,
         skipped_jobs: 0
       });
       expect(enqueueTrackedProductsForSources).toHaveBeenCalledWith([trackedProduct]);
@@ -311,7 +317,7 @@ describeWithDatabase("api", () => {
 
   test("lists canonical sources with labels and active state", async () => {
     await withTemporaryDatabase(async (databaseUrl) => {
-      const app = await createTestApp(databaseUrl, ["kabum"]);
+      const app = await createTestApp(databaseUrl, ["kabum", "pichau"]);
 
       try {
         const response = await app.inject({ method: "GET", url: "/sources" });
@@ -328,6 +334,11 @@ describeWithDatabase("api", () => {
               source_name: "amazon",
               source_label: "Amazon",
               active: false
+            },
+            {
+              source_name: "pichau",
+              source_label: "Pichau",
+              active: true
             }
           ]
         });
@@ -340,7 +351,7 @@ describeWithDatabase("api", () => {
   test("filters tracked product history by source after applying the source filter", async () => {
     await withTemporaryDatabase(async (databaseUrl) => {
       const database = await createTestDatabaseServices(databaseUrl);
-      const app = await createTestApp(databaseUrl, ["kabum", "amazon"]);
+      const app = await createTestApp(databaseUrl, ["kabum", "amazon", "pichau"]);
 
       try {
         const trackedProduct = await database.trackedProducts.create({
@@ -371,6 +382,14 @@ describeWithDatabase("api", () => {
           capturedAt: "2026-03-04T12:00:00+00:00",
           price: "5800.00",
           productKey: "2"
+        });
+        await persistSearchItem({
+          database,
+          trackedProductId: trackedProduct.id,
+          sourceName: "pichau",
+          capturedAt: "2026-03-05T13:00:00+00:00",
+          price: "5700.00",
+          productKey: "placa-de-video-sapphire-radeon-rx-9070-xt-pulse-16gb-gddr6-256-bit"
         });
 
         const allSourcesResponse = await app.inject({
@@ -406,12 +425,12 @@ describeWithDatabase("api", () => {
             item.price
           ])
         ).toEqual([
-          ["kabum", "5800.00"],
-          ["amazon", "6000.00"]
+          ["pichau", "5700.00"],
+          ["kabum", "5800.00"]
         ]);
         expect(allSourcesResponse.json().items[0]).toMatchObject({
-          source_name: "kabum",
-          source_label: "KaBuM!"
+          source_name: "pichau",
+          source_label: "Pichau"
         });
 
         expect(kabumResponse.statusCode).toBe(200);
@@ -440,7 +459,7 @@ describeWithDatabase("api", () => {
   test("returns one minimum-price series per source and supports specific-source filtering", async () => {
     await withTemporaryDatabase(async (databaseUrl) => {
       const database = await createTestDatabaseServices(databaseUrl);
-      const app = await createTestApp(databaseUrl, ["kabum", "amazon"]);
+      const app = await createTestApp(databaseUrl, ["kabum", "amazon", "pichau"]);
 
       try {
         const trackedProduct = await database.trackedProducts.create({
@@ -487,6 +506,14 @@ describeWithDatabase("api", () => {
           capturedAt: "2026-03-10T09:30:00+00:00",
           price: "5700.00",
           productKey: "3"
+        });
+        await persistSearchItem({
+          database,
+          trackedProductId: trackedProduct.id,
+          sourceName: "pichau",
+          capturedAt: "2026-03-03T08:30:00+00:00",
+          price: "5800.00",
+          productKey: "placa-de-video-sapphire-radeon-rx-9070-xt-pulse-16gb-gddr6-256-bit"
         });
 
         const allSourcesResponse = await app.inject({
@@ -547,6 +574,10 @@ describeWithDatabase("api", () => {
             [["2026-03-02T00:00:00+00:00", "5850.00"]]
           ],
           [
+            "pichau",
+            [["2026-03-02T00:00:00+00:00", "5800.00"]]
+          ],
+          [
             "kabum",
             [
               ["2026-03-02T00:00:00+00:00", "5900.00"],
@@ -561,6 +592,7 @@ describeWithDatabase("api", () => {
           ])
         ).toEqual([
           ["amazon", "5850.00"],
+          ["pichau", "5800.00"],
           ["kabum", "5900.00"],
           ["kabum", "5700.00"]
         ]);
@@ -607,7 +639,7 @@ describeWithDatabase("api", () => {
   test("rejects invalid source filters with 400", async () => {
     await withTemporaryDatabase(async (databaseUrl) => {
       const database = await createTestDatabaseServices(databaseUrl);
-      const app = await createTestApp(databaseUrl, ["kabum", "amazon"]);
+      const app = await createTestApp(databaseUrl, ["kabum", "amazon", "pichau"]);
 
       try {
         const trackedProduct = await database.trackedProducts.create({

@@ -16,7 +16,7 @@ const baseSettings: ScrapperSettings = {
   proxyPassword: "proxy-password",
   logLevel: "silent",
   userAgent: "test",
-  intervalSeconds: 21600,
+  intervalSeconds: 43200,
   enabledSources: ["kabum"]
 };
 
@@ -31,7 +31,11 @@ describe("runtime source selection", () => {
     );
 
     expect(configuredSources.map((source) => source.sourceName)).toEqual(["kabum"]);
-    expect(manualSources.map((source) => source.sourceName)).toEqual(["kabum", "amazon"]);
+    expect(manualSources.map((source) => source.sourceName)).toEqual([
+      "kabum",
+      "amazon",
+      "pichau"
+    ]);
 
     await Promise.all([...configuredSources, ...manualSources].map((source) => source.close()));
   });
