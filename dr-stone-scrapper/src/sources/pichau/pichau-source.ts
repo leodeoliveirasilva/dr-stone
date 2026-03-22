@@ -229,7 +229,7 @@ export class PichauSource implements SearchSource {
       responseStatus = response?.status() ?? null;
       await this.settlePage(page);
 
-      const firstPage = await this.extractPage(page, responseStatus);
+      const firstPage = await this.extractPageWithListingWait(page, responseStatus);
       if (firstPage.items.length === 0) {
         return {
           attempt: null,
@@ -247,7 +247,7 @@ export class PichauSource implements SearchSource {
             timeout: 90_000
           });
           await this.settlePage(paginatedPage);
-          const extraction = await this.extractPage(
+          const extraction = await this.extractPageWithListingWait(
             paginatedPage,
             paginatedResponse?.status() ?? null,
             items.length
@@ -391,6 +391,29 @@ export class PichauSource implements SearchSource {
     };
   }
 
+  private async extractPageWithListingWait(
+    page: Page,
+    responseStatus: number | null,
+    positionOffset = 0
+  ): Promise<{
+    finalUrl: string;
+    items: SearchResultItem[];
+    diagnostics: PichauPageDiagnostics;
+  }> {
+    let extraction = await this.extractPage(page, responseStatus, positionOffset);
+    if (
+      extraction.items.length > 0 ||
+      responseStatus !== 200 ||
+      extraction.diagnostics.challengeDetected
+    ) {
+      return extraction;
+    }
+
+    await this.waitForListingCandidates(page);
+    extraction = await this.extractPage(page, responseStatus, positionOffset);
+    return extraction;
+  }
+
   private buildDiagnostics(
     extraction: PichauPageExtraction,
     responseStatus: number | null,
@@ -448,6 +471,34 @@ export class PichauSource implements SearchSource {
     } catch {
       return null;
     }
+  }
+
+  private async waitForListingCandidates(page: Page): Promise<void> {
+    await this.safeRead(async () => {
+      await page.waitForFunction(() => {
+        const pageGlobals = globalThis as unknown as {
+          document: {
+            querySelectorAll: (selector: string) => Iterable<unknown>;
+          };
+        };
+
+        return Array.from(pageGlobals.document.querySelectorAll("a[href]")).some((anchor) => {
+          const anchorElement = anchor as {
+            href?: string | null;
+            innerText?: string | null;
+            textContent?: string | null;
+            getAttribute: (name: string) => string | null;
+          };
+          const href = anchorElement.href ?? anchorElement.getAttribute("href") ?? "";
+          const text = (anchorElement.innerText ?? anchorElement.textContent ?? "")
+            .replace(/\s+/g, " ")
+            .trim();
+
+          return href.includes("pichau.com.br") && /R\$\s*[\d.,]+/i.test(text);
+        });
+      }, { timeout: 10_000 });
+    });
+    await page.waitForTimeout(1_000);
   }
 
   private shouldRetryRoute(
