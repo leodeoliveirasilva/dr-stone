@@ -301,26 +301,24 @@ export async function createApp(
       sourceName: sourceFilter === SOURCE_FILTER_ALL ? null : sourceFilter
     });
 
-    const items = minimumRows.map(toMinimumPriceItemResponse);
     const groupedSeries = new Map<string, ReturnType<typeof toMinimumPriceItemResponse>[]>();
-    for (const item of items) {
+    for (const item of minimumRows.map(toMinimumPriceItemResponse)) {
       const bucket = groupedSeries.get(item.source_name) ?? [];
       bucket.push(item);
       groupedSeries.set(item.source_name, bucket);
     }
 
-    const series =
+    const sourceOrder = runtime.sources.map((source) => source.sourceName);
+    const orderedSourceNames =
       sourceFilter === SOURCE_FILTER_ALL
-        ? Array.from(groupedSeries.entries()).map(([sourceName, sourceItems]) => ({
-            ...toSourceMetadataResponse(sourceName),
-            items: sourceItems
-          }))
-        : [
-            {
-              ...toSourceMetadataResponse(sourceFilter),
-              items: groupedSeries.get(sourceFilter) ?? []
-            }
-          ];
+        ? sourceOrder.filter((sourceName) => groupedSeries.has(sourceName))
+        : [sourceFilter];
+
+    const series = orderedSourceNames.map((sourceName) => ({
+      ...toSourceMetadataResponse(sourceName),
+      items: groupedSeries.get(sourceName) ?? []
+    }));
+    const items = series.flatMap((entry) => entry.items);
 
     return {
       product_id: productId,

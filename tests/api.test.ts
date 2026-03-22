@@ -570,19 +570,19 @@ describeWithDatabase("api", () => {
           )
         ).toEqual([
           [
+            "kabum",
+            [
+              ["2026-03-02T00:00:00+00:00", "5900.00"],
+              ["2026-03-09T00:00:00+00:00", "5700.00"]
+            ]
+          ],
+          [
             "amazon",
             [["2026-03-02T00:00:00+00:00", "5850.00"]]
           ],
           [
             "pichau",
             [["2026-03-02T00:00:00+00:00", "5800.00"]]
-          ],
-          [
-            "kabum",
-            [
-              ["2026-03-02T00:00:00+00:00", "5900.00"],
-              ["2026-03-09T00:00:00+00:00", "5700.00"]
-            ]
           ]
         ]);
         expect(
@@ -591,14 +591,14 @@ describeWithDatabase("api", () => {
             item.price
           ])
         ).toEqual([
-          ["amazon", "5850.00"],
-          ["pichau", "5800.00"],
           ["kabum", "5900.00"],
-          ["kabum", "5700.00"]
+          ["kabum", "5700.00"],
+          ["amazon", "5850.00"],
+          ["pichau", "5800.00"]
         ]);
         expect(allSourcesResponse.json().series[0]).toMatchObject({
-          source_name: "amazon",
-          source_label: "Amazon"
+          source_name: "kabum",
+          source_label: "KaBuM!"
         });
 
         expect(amazonResponse.statusCode).toBe(200);
