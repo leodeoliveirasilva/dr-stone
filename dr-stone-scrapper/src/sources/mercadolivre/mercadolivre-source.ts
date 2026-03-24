@@ -64,6 +64,10 @@ export interface MercadoLivreChallengeSignals {
 const MAX_PAGE_VISITS = 20;
 const MAX_SEARCH_ATTEMPTS = 3;
 const PAGE_NAVIGATION_TIMEOUT_MS = 45_000;
+const WARM_UP_URL = "https://www.mercadolivre.com.br/";
+const WARM_UP_NAVIGATION_TIMEOUT_MS = 30_000;
+const WARM_UP_SETTLE_MS = 5_000;
+const COOKIE_CONSENT_TIMEOUT_MS = 3_000;
 
 export function detectMercadoLivreChallengeSignals(input: {
   finalUrl?: string | null;
@@ -224,6 +228,7 @@ export class MercadoLivreSource implements SearchSource {
 
     try {
       page = await this.createPage(context);
+      await this.warmUpSession(page);
       const response = await page.goto(searchUrl, {
         waitUntil: "domcontentloaded",
         timeout: PAGE_NAVIGATION_TIMEOUT_MS
@@ -457,13 +462,43 @@ export class MercadoLivreSource implements SearchSource {
   }
 
   private async createPage(context: BrowserContext): Promise<Page> {
-    const page = await context.newPage();
-    await this.blockChallengeScripts(page);
-    return page;
+    return context.newPage();
   }
 
-  private async blockChallengeScripts(page: Page): Promise<void> {
-    await page.route("**/cdn-cgi/challenge-platform/**", (route) => route.abort());
+  private async warmUpSession(page: Page): Promise<void> {
+    this.logger.info(
+      { event: "mercadolivre_warmup_started", url: WARM_UP_URL },
+      "mercadolivre_warmup_started"
+    );
+
+    await page.goto(WARM_UP_URL, {
+      waitUntil: "domcontentloaded",
+      timeout: WARM_UP_NAVIGATION_TIMEOUT_MS
+    });
+
+    await this.safeRead(async () => {
+      await page.waitForLoadState("networkidle", { timeout: WARM_UP_NAVIGATION_TIMEOUT_MS });
+    });
+
+    await page.waitForTimeout(WARM_UP_SETTLE_MS);
+
+    await this.acceptCookieConsent(page);
+
+    const finalUrl = page.url();
+    this.logger.info(
+      { event: "mercadolivre_warmup_completed", finalUrl },
+      "mercadolivre_warmup_completed"
+    );
+  }
+
+  private async acceptCookieConsent(page: Page): Promise<void> {
+    await this.safeRead(async () => {
+      const cookieButton = page.locator(
+        "button:has-text('Aceitar cookies'), button:has-text('Entendido'), [data-testid='action:understood'], button[data-testid='cookie-consent-accept']"
+      );
+      await cookieButton.first().click({ timeout: COOKIE_CONSENT_TIMEOUT_MS });
+      await page.waitForTimeout(1_000);
+    });
   }
 
   private async settlePage(page: Page): Promise<void> {
