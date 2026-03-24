@@ -34,7 +34,8 @@ describe("runtime source selection", () => {
     expect(manualSources.map((source) => source.sourceName)).toEqual([
       "kabum",
       "amazon",
-      "pichau"
+      "pichau",
+      "mercadolivre"
     ]);
 
     await Promise.all([...configuredSources, ...manualSources].map((source) => source.close()));

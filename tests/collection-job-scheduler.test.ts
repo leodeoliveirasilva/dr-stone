@@ -61,7 +61,7 @@ describe("collection job scheduler", () => {
         logLevel: "silent",
         userAgent: "test",
         intervalSeconds: 43200,
-        enabledSources: ["kabum", "amazon", "pichau"]
+        enabledSources: ["kabum", "amazon", "pichau", "mercadolivre"]
       },
       {
         trackedProducts: {
@@ -70,7 +70,7 @@ describe("collection job scheduler", () => {
         }
       } as never,
       createLogger("silent"),
-      ["kabum", "amazon", "pichau"],
+      ["kabum", "amazon", "pichau", "mercadolivre"],
       {
         boss,
         now: () => Date.parse("2026-03-19T18:00:00.000Z")
@@ -97,10 +97,12 @@ describe("collection job scheduler", () => {
     ]);
 
     expect(summary).toEqual({
-      scheduledCount: 6,
+      scheduledCount: 8,
       skippedCount: 0
     });
     expect(boss.jobs.map((job) => job.name)).toEqual([
+      SEARCH_COLLECTION_JOB_QUEUE,
+      SEARCH_COLLECTION_JOB_QUEUE,
       SEARCH_COLLECTION_JOB_QUEUE,
       SEARCH_COLLECTION_JOB_QUEUE,
       SEARCH_COLLECTION_JOB_QUEUE,
@@ -114,15 +116,19 @@ describe("collection job scheduler", () => {
       "2026-03-19T18:00:00.000Z",
       "2026-03-19T18:00:00.000Z",
       "2026-03-19T18:00:00.000Z",
+      "2026-03-19T18:00:00.000Z",
+      "2026-03-19T18:00:00.000Z",
       "2026-03-19T18:00:00.000Z"
     ]);
     expect(boss.jobs.map((job) => job.options?.singletonKey)).toEqual([
       "prod-1:kabum",
       "prod-1:amazon",
       "prod-1:pichau",
+      "prod-1:mercadolivre",
       "prod-2:kabum",
       "prod-2:amazon",
-      "prod-2:pichau"
+      "prod-2:pichau",
+      "prod-2:mercadolivre"
     ]);
     expect(boss.jobs.every((job) => job.options?.singletonSeconds === 43200)).toBe(true);
   });
@@ -142,7 +148,7 @@ describe("collection job scheduler", () => {
         logLevel: "silent",
         userAgent: "test",
         intervalSeconds: 43200,
-        enabledSources: ["kabum", "amazon", "pichau"]
+        enabledSources: ["kabum", "amazon", "pichau", "mercadolivre"]
       },
       {
         trackedProducts: {
@@ -151,7 +157,7 @@ describe("collection job scheduler", () => {
         }
       } as never,
       createLogger("silent"),
-      ["kabum", "amazon", "pichau"],
+      ["kabum", "amazon", "pichau", "mercadolivre"],
       {
         boss,
         now: () => Date.parse("2026-03-19T18:00:00.000Z")
@@ -173,7 +179,7 @@ describe("collection job scheduler", () => {
       { force: true }
     );
 
-    expect(summary).toEqual({ scheduledCount: 3, skippedCount: 0 });
+    expect(summary).toEqual({ scheduledCount: 4, skippedCount: 0 });
     expect(boss.jobs.every((job) => job.options?.singletonKey === undefined)).toBe(true);
     expect(boss.jobs.every((job) => job.options?.singletonSeconds === undefined)).toBe(true);
   });

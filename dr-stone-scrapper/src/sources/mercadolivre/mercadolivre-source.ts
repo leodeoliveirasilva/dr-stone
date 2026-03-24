@@ -1,0 +1,727 @@
+import type { SearchRunResult, SearchResultItem } from "@dr-stone/database";
+import type { Browser, BrowserContext, Page } from "playwright";
+
+import { buildBrowserLaunchOptions, createStealthBrowserContext } from "../../browser/playwright.js";
+import { FetchError } from "../../errors.js";
+import type { LoggerLike, ScrapperSettings, SearchSource } from "../../types.js";
+import {
+  buildMercadoLivreSearchUrl,
+  MERCADO_LIVRE_SEARCH_BASE_URL,
+  parseMercadoLivreListingCandidates,
+  type MercadoLivreListingCandidate
+} from "./mercadolivre-parsing.js";
+
+interface MercadoLivrePageExtraction {
+  finalUrl: string;
+  pageTitle: string;
+  bodyTextSnippet: string;
+  candidateCount: number;
+  pageNumbers: number[];
+  nextPageUrl: string | null;
+  candidates: MercadoLivreListingCandidate[];
+}
+
+interface MercadoLivrePageDiagnostics {
+  responseStatus: number | null;
+  finalUrl: string | null;
+  pageTitle: string | null;
+  bodyTextSnippet: string | null;
+  candidateCount: number;
+  itemCount: number;
+  totalPages: number;
+  nextPageDetected: boolean;
+  challengeDetected: boolean;
+  cloudflareDetected: boolean;
+  cloudfrontDetected: boolean;
+  captchaDetected: boolean;
+  accessDeniedDetected: boolean;
+  emptyResultsDetected: boolean;
+}
+
+interface MercadoLivreSearchPage {
+  finalUrl: string;
+  nextPageUrl: string | null;
+  items: SearchResultItem[];
+  diagnostics: MercadoLivrePageDiagnostics;
+}
+
+const MAX_PAGE_VISITS = 20;
+
+export class MercadoLivreSource implements SearchSource {
+  readonly sourceName = "mercadolivre";
+  readonly strategy = "browser" as const;
+  private browserPromise: Promise<Browser> | null = null;
+
+  constructor(
+    private readonly settings: Pick<
+      ScrapperSettings,
+      "proxyServer" | "proxyUsername" | "proxyPassword" | "userAgent"
+    >,
+    private readonly logger: LoggerLike
+  ) {}
+
+  buildSearchUrl(searchTerm: string): string {
+    return buildMercadoLivreSearchUrl(searchTerm);
+  }
+
+  async search(searchTerm: string): Promise<SearchRunResult> {
+    const { chromium } = await import("playwright");
+    this.browserPromise ??= chromium.launch(buildBrowserLaunchOptions(this.settings));
+
+    const browser = await this.browserPromise;
+    const context = await createStealthBrowserContext(browser, this.settings);
+    const searchUrl = this.buildSearchUrl(searchTerm);
+
+    let page: Page | null = null;
+    let responseStatus: number | null = null;
+
+    try {
+      page = await this.createPage(context);
+      const response = await page.goto(searchUrl, {
+        waitUntil: "domcontentloaded",
+        timeout: 90_000
+      });
+      responseStatus = response?.status() ?? null;
+      await this.settlePage(page);
+
+      const firstPage = await this.extractPageWithListingWait(page, responseStatus);
+      if (firstPage.items.length === 0) {
+        throw this.buildEmptyPageError(searchTerm, searchUrl, firstPage.diagnostics);
+      }
+
+      const seenCanonicalUrls = new Set(firstPage.items.map((item) => item.canonicalUrl));
+      const items = [...firstPage.items];
+      const visitedUrls = new Set([normalizeVisitedUrl(firstPage.finalUrl)]);
+
+      let nextPageUrl = firstPage.nextPageUrl;
+      let pageCount = Math.max(1, firstPage.diagnostics.totalPages);
+      let lastDiagnostics = firstPage.diagnostics;
+
+      while (nextPageUrl && visitedUrls.size < MAX_PAGE_VISITS) {
+        const normalizedNextPageUrl = normalizeVisitedUrl(nextPageUrl);
+        if (visitedUrls.has(normalizedNextPageUrl)) {
+          break;
+        }
+
+        visitedUrls.add(normalizedNextPageUrl);
+        const paginatedResponse = await page.goto(nextPageUrl, {
+          waitUntil: "domcontentloaded",
+          timeout: 90_000
+        });
+        await this.settlePage(page);
+
+        const extractedPage = await this.extractPageWithListingWait(
+          page,
+          paginatedResponse?.status() ?? null,
+          items.length
+        );
+
+        if (extractedPage.items.length === 0) {
+          throw new FetchError(
+            this.buildFailureMessage(
+              extractedPage.diagnostics.challengeDetected
+                ? "mercadolivre_challenge_detected"
+                : "mercadolivre_empty_page",
+              extractedPage.diagnostics
+            ),
+            {
+              code: extractedPage.diagnostics.challengeDetected
+                ? "mercadolivre_challenge_detected"
+                : "mercadolivre_empty_page",
+              retriable: true,
+              statusCode: extractedPage.diagnostics.responseStatus ?? undefined,
+              url: nextPageUrl,
+              finalUrl: extractedPage.diagnostics.finalUrl ?? undefined,
+              details: {
+                pageNumber: visitedUrls.size,
+                responseStatus: extractedPage.diagnostics.responseStatus,
+                pageTitle: extractedPage.diagnostics.pageTitle,
+                candidateCount: extractedPage.diagnostics.candidateCount,
+                challengeDetected: extractedPage.diagnostics.challengeDetected,
+                bodyTextSnippet: extractedPage.diagnostics.bodyTextSnippet
+              }
+            }
+          );
+        }
+
+        for (const item of extractedPage.items) {
+          if (seenCanonicalUrls.has(item.canonicalUrl)) {
+            continue;
+          }
+
+          seenCanonicalUrls.add(item.canonicalUrl);
+          items.push(item);
+        }
+
+        nextPageUrl = extractedPage.nextPageUrl;
+        pageCount = Math.max(pageCount, extractedPage.diagnostics.totalPages, visitedUrls.size);
+        lastDiagnostics = extractedPage.diagnostics;
+      }
+
+      const result: SearchRunResult = {
+        source: this.sourceName,
+        searchTerm,
+        resolvedUrl: firstPage.finalUrl,
+        totalResults: items.length,
+        pageCount,
+        items,
+        fetchedAt: new Date().toISOString(),
+        metadata: {
+          searchUrl,
+          responseStatus: firstPage.diagnostics.responseStatus,
+          pageTitle: firstPage.diagnostics.pageTitle,
+          candidateCount: firstPage.diagnostics.candidateCount,
+          totalPages: pageCount,
+          nextPageDetected: firstPage.diagnostics.nextPageDetected,
+          challengeDetected: firstPage.diagnostics.challengeDetected,
+          cloudflareDetected: firstPage.diagnostics.cloudflareDetected,
+          cloudfrontDetected: firstPage.diagnostics.cloudfrontDetected,
+          captchaDetected: firstPage.diagnostics.captchaDetected,
+          accessDeniedDetected: firstPage.diagnostics.accessDeniedDetected,
+          emptyResultsDetected: firstPage.diagnostics.emptyResultsDetected,
+          finalPageTitle: lastDiagnostics.pageTitle,
+          proxyConfigured: Boolean(this.settings.proxyServer)
+        }
+      };
+
+      this.logger.info(
+        {
+          event: "search_scrape_succeeded",
+          source: this.sourceName,
+          searchTerm,
+          resolvedUrl: result.resolvedUrl,
+          totalResults: result.totalResults,
+          pageCount: result.pageCount,
+          itemCount: result.items.length,
+          responseStatus: firstPage.diagnostics.responseStatus,
+          pageTitle: firstPage.diagnostics.pageTitle,
+          candidateCount: firstPage.diagnostics.candidateCount,
+          challengeDetected: firstPage.diagnostics.challengeDetected,
+          proxyConfigured: Boolean(this.settings.proxyServer)
+        },
+        "search_scrape_succeeded"
+      );
+
+      return result;
+    } catch (error) {
+      const diagnostics = page
+        ? await this.collectDiagnostics(page, responseStatus)
+        : this.buildFallbackDiagnostics(searchUrl, responseStatus);
+      const fetchError =
+        error instanceof FetchError
+          ? error
+          : new FetchError(
+              this.buildFailureMessage(
+                error instanceof Error && error.name === "TimeoutError"
+                  ? "mercadolivre_results_timeout"
+                  : diagnostics.challengeDetected
+                    ? "mercadolivre_challenge_detected"
+                    : "mercadolivre_search_failed",
+                diagnostics
+              ),
+              {
+                code:
+                  error instanceof Error && error.name === "TimeoutError"
+                    ? "mercadolivre_results_timeout"
+                    : diagnostics.challengeDetected
+                      ? "mercadolivre_challenge_detected"
+                      : "mercadolivre_search_failed",
+                retriable: true,
+                statusCode: diagnostics.responseStatus ?? undefined,
+                url: searchUrl,
+                finalUrl: diagnostics.finalUrl ?? undefined,
+                details: {
+                  searchTerm,
+                  responseStatus: diagnostics.responseStatus,
+                  finalUrl: diagnostics.finalUrl,
+                  pageTitle: diagnostics.pageTitle,
+                  candidateCount: diagnostics.candidateCount,
+                  itemCount: diagnostics.itemCount,
+                  totalPages: diagnostics.totalPages,
+                  nextPageDetected: diagnostics.nextPageDetected,
+                  challengeDetected: diagnostics.challengeDetected,
+                  cloudflareDetected: diagnostics.cloudflareDetected,
+                  cloudfrontDetected: diagnostics.cloudfrontDetected,
+                  captchaDetected: diagnostics.captchaDetected,
+                  accessDeniedDetected: diagnostics.accessDeniedDetected,
+                  emptyResultsDetected: diagnostics.emptyResultsDetected,
+                  bodyTextSnippet: diagnostics.bodyTextSnippet,
+                  proxyConfigured: Boolean(this.settings.proxyServer),
+                  originalErrorType: error instanceof Error ? error.constructor.name : "UnknownError",
+                  originalErrorMessage: error instanceof Error ? error.message : String(error)
+                }
+              }
+            );
+
+      this.logger.error(
+        {
+          event: "search_scrape_failed",
+          source: this.sourceName,
+          searchTerm,
+          searchUrl,
+          errorCode: fetchError.code,
+          responseStatus: fetchError.statusCode ?? diagnostics.responseStatus,
+          finalUrl: fetchError.finalUrl ?? diagnostics.finalUrl,
+          pageTitle:
+            typeof fetchError.details.pageTitle === "string"
+              ? fetchError.details.pageTitle
+              : diagnostics.pageTitle,
+          candidateCount:
+            typeof fetchError.details.candidateCount === "number"
+              ? fetchError.details.candidateCount
+              : diagnostics.candidateCount,
+          challengeDetected:
+            typeof fetchError.details.challengeDetected === "boolean"
+              ? fetchError.details.challengeDetected
+              : diagnostics.challengeDetected,
+          bodyTextSnippet:
+            typeof fetchError.details.bodyTextSnippet === "string"
+              ? fetchError.details.bodyTextSnippet
+              : diagnostics.bodyTextSnippet,
+          proxyConfigured: Boolean(this.settings.proxyServer),
+          originalErrorMessage:
+            error instanceof Error && !(error instanceof FetchError) ? error.message : undefined
+        },
+        "search_scrape_failed"
+      );
+
+      throw fetchError;
+    } finally {
+      await context.close();
+    }
+  }
+
+  async close(): Promise<void> {
+    if (!this.browserPromise) {
+      return;
+    }
+
+    const browser = await this.browserPromise;
+    await browser.close();
+    this.browserPromise = null;
+  }
+
+  private async createPage(context: BrowserContext): Promise<Page> {
+    const page = await context.newPage();
+    await this.blockChallengeScripts(page);
+    return page;
+  }
+
+  private async blockChallengeScripts(page: Page): Promise<void> {
+    await page.route("**/cdn-cgi/challenge-platform/**", (route) => route.abort());
+  }
+
+  private async settlePage(page: Page): Promise<void> {
+    await this.safeRead(async () => {
+      await page.waitForLoadState("networkidle", { timeout: 10_000 });
+    });
+    await page.waitForTimeout(3_000);
+  }
+
+  private async extractPage(
+    page: Page,
+    responseStatus: number | null,
+    positionOffset = 0
+  ): Promise<MercadoLivreSearchPage> {
+    const extraction = await this.evaluatePage(page);
+    const items = parseMercadoLivreListingCandidates(extraction.candidates, {
+      baseUrl: MERCADO_LIVRE_SEARCH_BASE_URL,
+      positionOffset
+    });
+    const diagnostics = this.buildDiagnostics(extraction, responseStatus, items.length);
+
+    return {
+      finalUrl: extraction.finalUrl,
+      nextPageUrl: extraction.nextPageUrl,
+      items,
+      diagnostics
+    };
+  }
+
+  private async extractPageWithListingWait(
+    page: Page,
+    responseStatus: number | null,
+    positionOffset = 0
+  ): Promise<MercadoLivreSearchPage> {
+    let extractedPage = await this.extractPage(page, responseStatus, positionOffset);
+    if (
+      extractedPage.items.length > 0 ||
+      responseStatus !== 200 ||
+      extractedPage.diagnostics.challengeDetected
+    ) {
+      return extractedPage;
+    }
+
+    await this.waitForListingCandidates(page);
+    extractedPage = await this.extractPage(page, responseStatus, positionOffset);
+    return extractedPage;
+  }
+
+  private async evaluatePage(page: Page): Promise<MercadoLivrePageExtraction> {
+    return page.evaluate((): MercadoLivrePageExtraction => {
+      type DomNode = {
+        href?: string | null;
+        textContent?: string | null;
+        innerText?: string | null;
+        getAttribute?: (name: string) => string | null;
+        querySelector?: (selector: string) => DomNode | null;
+        querySelectorAll?: (selector: string) => Iterable<DomNode>;
+      };
+      const pageGlobals = globalThis as unknown as {
+        document: {
+          title: string;
+          body: {
+            innerText: string;
+          };
+          querySelector: (selector: string) => DomNode | null;
+          querySelectorAll: (selector: string) => Iterable<DomNode>;
+        };
+        window: {
+          location: {
+            href: string;
+          };
+        };
+      };
+      const { document, window } = pageGlobals;
+
+      const normalizeText = (value: string | null | undefined) =>
+        value?.replace(/\s+/g, " ").trim() ?? "";
+
+      const querySelectorAny = (
+        root: {
+          querySelector: (selector: string) => DomNode | null;
+        },
+        selectors: readonly string[]
+      ): DomNode | null => {
+        for (const selector of selectors) {
+          const node = root.querySelector(selector);
+          if (node) {
+            return node;
+          }
+        }
+
+        return null;
+      };
+
+      const listRoots = Array.from(
+        document.querySelectorAll(
+          "li.ui-search-layout__item, div.ui-search-result__wrapper, div[data-testid='result-item']"
+        )
+      );
+
+      const candidates = listRoots.map((node) => {
+        const element = node as DomNode & {
+          textContent?: string | null;
+          innerText?: string | null;
+          getAttribute: (name: string) => string | null;
+          querySelector: (selector: string) => DomNode | null;
+        };
+
+        const anchor = querySelectorAny(element, [
+          "a.poly-component__title[href]",
+          "a.ui-search-link[href]",
+          "a[href*='/p/MLB']",
+          "a[href*='MLB-']",
+          "a[href]"
+        ]) as
+          | (DomNode & {
+              href?: string | null;
+              textContent?: string | null;
+              getAttribute: (name: string) => string | null;
+            })
+          | null;
+
+        const priceNode = querySelectorAny(element, [
+          ".poly-price__current .andes-money-amount",
+          ".poly-component__price .andes-money-amount",
+          ".ui-search-price__second-line .andes-money-amount",
+          ".andes-money-amount"
+        ]) as
+          | (DomNode & {
+              textContent?: string | null;
+              querySelector: (selector: string) => DomNode | null;
+            })
+          | null;
+
+        const priceWholeNode = querySelectorAny(priceNode ?? element, [
+          ".andes-money-amount__fraction"
+        ]) as (DomNode & { textContent?: string | null }) | null;
+        const priceCentsNode = querySelectorAny(priceNode ?? element, [
+          ".andes-money-amount__cents"
+        ]) as (DomNode & { textContent?: string | null }) | null;
+        const currencyNode = querySelectorAny(priceNode ?? element, [
+          ".andes-money-amount__currency-symbol"
+        ]) as (DomNode & { textContent?: string | null }) | null;
+
+        const titleNode = querySelectorAny(element, [
+          "a.poly-component__title",
+          ".poly-component__title",
+          "h2.ui-search-item__title",
+          ".ui-search-item__title"
+        ]) as (DomNode & { textContent?: string | null }) | null;
+
+        const sellerNode = querySelectorAny(element, [
+          ".poly-component__seller",
+          ".poly-component__seller .poly-component__seller-name",
+          ".ui-search-official-store-label",
+          "[class*='seller']"
+        ]) as (DomNode & { textContent?: string | null }) | null;
+
+        const shippingNode = querySelectorAny(element, [
+          ".poly-component__shipping",
+          ".ui-search-item__shipping",
+          "[class*='shipping']"
+        ]) as (DomNode & { textContent?: string | null }) | null;
+
+        const installmentsNode = querySelectorAny(element, [
+          ".poly-price__installments",
+          ".ui-search-installments",
+          "[class*='installments']"
+        ]) as (DomNode & { textContent?: string | null }) | null;
+
+        const stockNode = querySelectorAny(element, [
+          ".poly-component__available-quantity",
+          "[class*='available']",
+          "[class*='stock']"
+        ]) as (DomNode & { textContent?: string | null }) | null;
+
+        const listingTypeNode = querySelectorAny(element, [
+          ".poly-component__status",
+          ".ui-search-item__highlight-label",
+          ".andes-badge",
+          "[data-testid='listing-type']"
+        ]) as (DomNode & { textContent?: string | null }) | null;
+
+        return {
+          href: anchor?.href ?? anchor?.getAttribute("href") ?? null,
+          title: normalizeText(titleNode?.textContent),
+          titleAttr: normalizeText(anchor?.getAttribute("title")),
+          ariaLabel: normalizeText(anchor?.getAttribute("aria-label")),
+          cardText: normalizeText(element.innerText ?? element.textContent),
+          priceText: normalizeText(priceNode?.textContent),
+          priceWhole: normalizeText(priceWholeNode?.textContent),
+          priceCents: normalizeText(priceCentsNode?.textContent),
+          currencyText: normalizeText(currencyNode?.textContent),
+          sellerText: normalizeText(sellerNode?.textContent),
+          shippingText: normalizeText(shippingNode?.textContent),
+          installmentsText: normalizeText(installmentsNode?.textContent),
+          stockText: normalizeText(stockNode?.textContent),
+          listingType: normalizeText(listingTypeNode?.textContent),
+          dataId:
+            element.getAttribute("data-id") ??
+            element.getAttribute("data-item-id") ??
+            anchor?.getAttribute("data-id") ??
+            null
+        };
+      });
+
+      const nextLink = querySelectorAny(document, [
+        "a.andes-pagination__link[title='Seguinte']",
+        "a.andes-pagination__link[aria-label*='Seguinte']",
+        "a.andes-pagination__link[aria-label*='Próxima']",
+        "a[rel='next']",
+        "a[title='Seguinte']",
+        "a[aria-label*='Seguinte']",
+        "a[aria-label*='Próxima']"
+      ]) as (DomNode & { href?: string | null; getAttribute: (name: string) => string | null }) | null;
+
+      const pageNumbers = Array.from(
+        document.querySelectorAll(
+          ".andes-pagination__button, .andes-pagination__link, nav[aria-label*='Paginação'] a, nav[aria-label*='Pagination'] a"
+        )
+      )
+        .map((node) =>
+          Number.parseInt(
+            normalizeText((node as DomNode & { textContent?: string | null }).textContent),
+            10
+          )
+        )
+        .filter((value) => Number.isInteger(value) && value > 0);
+
+      return {
+        finalUrl: window.location.href,
+        pageTitle: document.title,
+        bodyTextSnippet: normalizeText(document.body.innerText).slice(0, 500),
+        candidateCount: candidates.length,
+        pageNumbers,
+        nextPageUrl: nextLink?.href ?? nextLink?.getAttribute("href") ?? null,
+        candidates
+      };
+    });
+  }
+
+  private buildDiagnostics(
+    extraction: MercadoLivrePageExtraction,
+    responseStatus: number | null,
+    itemCount: number
+  ): MercadoLivrePageDiagnostics {
+    const pageTitle = extraction.pageTitle || null;
+    const bodyText = extraction.bodyTextSnippet.toLocaleLowerCase();
+    const challengeDetected =
+      /cloudflare|cloudfront|captcha|attention required|access denied|403 error|verifique se você é humano/.test(
+        bodyText
+      ) ||
+      /cloudflare|cloudfront|captcha|attention required|access denied|403 error/i.test(
+        extraction.pageTitle
+      );
+
+    return {
+      responseStatus,
+      finalUrl: extraction.finalUrl || null,
+      pageTitle,
+      bodyTextSnippet: extraction.bodyTextSnippet || null,
+      candidateCount: extraction.candidateCount,
+      itemCount,
+      totalPages: Math.max(1, ...extraction.pageNumbers, itemCount > 0 ? 1 : 0),
+      nextPageDetected: Boolean(extraction.nextPageUrl),
+      challengeDetected,
+      cloudflareDetected: /cloudflare|cf-chl|challenge-platform/.test(bodyText),
+      cloudfrontDetected: /cloudfront|request blocked|generated by cloudfront/.test(bodyText),
+      captchaDetected: /captcha|sou humano|verify you are human|verifique se você é humano/.test(
+        bodyText
+      ),
+      accessDeniedDetected: /access denied|403 forbidden|403 error|request blocked/.test(bodyText),
+      emptyResultsDetected:
+        itemCount === 0 &&
+        /não há anúncios|não encontramos|sem resultados|resultados para/.test(bodyText)
+    };
+  }
+
+  private buildEmptyPageError(
+    searchTerm: string,
+    searchUrl: string,
+    diagnostics: MercadoLivrePageDiagnostics
+  ): FetchError {
+    const errorCode = diagnostics.challengeDetected
+      ? "mercadolivre_challenge_detected"
+      : "mercadolivre_empty_page";
+
+    return new FetchError(this.buildFailureMessage(errorCode, diagnostics), {
+      code: errorCode,
+      retriable: true,
+      statusCode: diagnostics.responseStatus ?? undefined,
+      url: searchUrl,
+      finalUrl: diagnostics.finalUrl ?? undefined,
+      details: {
+        searchTerm,
+        responseStatus: diagnostics.responseStatus,
+        finalUrl: diagnostics.finalUrl,
+        pageTitle: diagnostics.pageTitle,
+        candidateCount: diagnostics.candidateCount,
+        itemCount: diagnostics.itemCount,
+        totalPages: diagnostics.totalPages,
+        nextPageDetected: diagnostics.nextPageDetected,
+        challengeDetected: diagnostics.challengeDetected,
+        cloudflareDetected: diagnostics.cloudflareDetected,
+        cloudfrontDetected: diagnostics.cloudfrontDetected,
+        captchaDetected: diagnostics.captchaDetected,
+        accessDeniedDetected: diagnostics.accessDeniedDetected,
+        emptyResultsDetected: diagnostics.emptyResultsDetected,
+        bodyTextSnippet: diagnostics.bodyTextSnippet,
+        proxyConfigured: Boolean(this.settings.proxyServer)
+      }
+    });
+  }
+
+  private buildFailureMessage(
+    errorCode: string,
+    diagnostics: Pick<
+      MercadoLivrePageDiagnostics,
+      "pageTitle" | "responseStatus" | "challengeDetected" | "emptyResultsDetected"
+    > | null
+  ): string {
+    const reason =
+      errorCode === "mercadolivre_results_timeout"
+        ? "Mercado Livre listing results did not stabilize before the timeout"
+        : errorCode === "mercadolivre_challenge_detected"
+          ? "Mercado Livre challenge page remained active"
+          : errorCode === "mercadolivre_empty_page"
+            ? "Mercado Livre search page returned no extractable listing items"
+            : "Mercado Livre search failed";
+
+    const details = [
+      diagnostics?.responseStatus ? `status ${diagnostics.responseStatus}` : null,
+      diagnostics?.pageTitle ? `title "${diagnostics.pageTitle}"` : null,
+      diagnostics?.challengeDetected ? "challenge_detected" : null,
+      diagnostics?.emptyResultsDetected ? "empty_results_detected" : null
+    ]
+      .filter(Boolean)
+      .join(", ");
+
+    return details ? `${reason} (${details})` : reason;
+  }
+
+  private async collectDiagnostics(
+    page: Page,
+    responseStatus: number | null
+  ): Promise<MercadoLivrePageDiagnostics> {
+    try {
+      const extraction = await this.evaluatePage(page);
+      return this.buildDiagnostics(extraction, responseStatus, 0);
+    } catch {
+      return this.buildFallbackDiagnostics(page.url(), responseStatus);
+    }
+  }
+
+  private buildFallbackDiagnostics(
+    targetUrl: string,
+    responseStatus: number | null
+  ): MercadoLivrePageDiagnostics {
+    return {
+      responseStatus,
+      finalUrl: targetUrl,
+      pageTitle: null,
+      bodyTextSnippet: null,
+      candidateCount: 0,
+      itemCount: 0,
+      totalPages: 1,
+      nextPageDetected: false,
+      challengeDetected: false,
+      cloudflareDetected: false,
+      cloudfrontDetected: false,
+      captchaDetected: false,
+      accessDeniedDetected: false,
+      emptyResultsDetected: false
+    };
+  }
+
+  private async waitForListingCandidates(page: Page): Promise<void> {
+    await this.safeRead(async () => {
+      await page.waitForFunction(() => {
+        const pageGlobals = globalThis as unknown as {
+          document: {
+            querySelectorAll: (selector: string) => Iterable<unknown>;
+          };
+        };
+
+        return Array.from(
+          pageGlobals.document.querySelectorAll(
+            "li.ui-search-layout__item, div.ui-search-result__wrapper, div[data-testid='result-item']"
+          )
+        ).some((node) => {
+          const element = node as {
+            textContent?: string | null;
+            innerText?: string | null;
+          };
+          const text = (element.innerText ?? element.textContent ?? "").replace(/\s+/g, " ").trim();
+          return /R\$\s*[\d.]+(?:,\d{2})?/i.test(text);
+        });
+      }, { timeout: 10_000 });
+    });
+    await page.waitForTimeout(1_000);
+  }
+
+  private async safeRead<T>(callback: () => Promise<T>): Promise<T | null> {
+    try {
+      return await callback();
+    } catch {
+      return null;
+    }
+  }
+}
+
+function normalizeVisitedUrl(url: string): string {
+  const parsedUrl = new URL(url);
+  parsedUrl.hash = "";
+  return parsedUrl.toString();
+}
