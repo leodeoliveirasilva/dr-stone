@@ -40,7 +40,17 @@ export function buildSearchSources(
   }
 
   if (enabled.has("mercadolivre")) {
-    sources.push(new MercadoLivreSource(settings, logger));
+    sources.push(
+      new MercadoLivreSource(
+        {
+          proxyServer: "",
+          proxyUsername: "",
+          proxyPassword: "",
+          userAgent: settings.userAgent
+        },
+        logger
+      )
+    );
   }
 
   return sources;

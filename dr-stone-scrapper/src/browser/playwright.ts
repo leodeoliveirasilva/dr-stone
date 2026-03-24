@@ -10,8 +10,13 @@ const DEFAULT_BROWSER_ARGS = [
   "--no-sandbox"
 ] as const;
 
+export interface BrowserLaunchOverrides {
+  proxySessionId?: string | null;
+}
+
 export function buildBrowserLaunchOptions(
-  settings: Pick<ScrapperSettings, "proxyServer" | "proxyUsername" | "proxyPassword">
+  settings: Pick<ScrapperSettings, "proxyServer" | "proxyUsername" | "proxyPassword">,
+  overrides: BrowserLaunchOverrides = {}
 ): LaunchOptions {
   return {
     headless: true,
@@ -19,11 +24,28 @@ export function buildBrowserLaunchOptions(
     proxy: settings.proxyServer
       ? {
           server: settings.proxyServer,
-          username: settings.proxyUsername ?? undefined,
+          username: buildProxyUsername(settings.proxyUsername, overrides.proxySessionId),
           password: settings.proxyPassword ?? undefined
         }
       : undefined
   };
+}
+
+export function buildProxyUsername(
+  proxyUsername: string | null | undefined,
+  proxySessionId: string | null | undefined
+): string | undefined {
+  const normalizedUsername = proxyUsername?.trim();
+  if (!normalizedUsername) {
+    return undefined;
+  }
+
+  const normalizedSessionId = proxySessionId?.trim();
+  if (!normalizedSessionId) {
+    return normalizedUsername;
+  }
+
+  return `${normalizedUsername}-session-${normalizedSessionId}`;
 }
 
 export async function createStealthBrowserContext(

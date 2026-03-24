@@ -1,5 +1,7 @@
 import { describe, expect, test } from "vitest";
 
+import { buildBrowserLaunchOptions } from "../dr-stone-scrapper/src/browser/playwright.js";
+import { detectMercadoLivreChallengeSignals } from "../dr-stone-scrapper/src/sources/mercadolivre/mercadolivre-source.js";
 import {
   buildMercadoLivreSearchUrl,
   extractMercadoLivrePrimaryPrice,
@@ -8,6 +10,38 @@ import {
 } from "../dr-stone-scrapper/src/sources/mercadolivre/mercadolivre-parsing.js";
 
 describe("mercado livre parsing", () => {
+  test("detects the account-verification flow as a challenge", () => {
+    expect(
+      detectMercadoLivreChallengeSignals({
+        finalUrl:
+          "https://www.mercadolivre.com.br/gz/account-verification?go=https%3A%2F%2Flista.mercadolivre.com.br%2Frx-9070-xt",
+        bodyTextSnippet:
+          "Olá! Para continuar, acesse sua conta Sou novo Já tenho conta",
+        pageTitle: null
+      })
+    ).toMatchObject({
+      challengeDetected: true,
+      accountVerificationDetected: true
+    });
+  });
+
+  test("adds a session suffix to the proxy username when requested", () => {
+    expect(
+      buildBrowserLaunchOptions(
+        {
+          proxyServer: "http://127.0.0.1:3128",
+          proxyUsername: "proxyuser",
+          proxyPassword: "proxy-password"
+        },
+        {
+          proxySessionId: "mercadolivre-1"
+        }
+      ).proxy
+    ).toMatchObject({
+      username: "proxyuser-session-mercadolivre-1"
+    });
+  });
+
   test("builds the browser-backed search URL from the normalized slug", () => {
     expect(buildMercadoLivreSearchUrl("RX 9070 XT Sapphire")).toBe(
       "https://lista.mercadolivre.com.br/rx-9070-xt-sapphire"
