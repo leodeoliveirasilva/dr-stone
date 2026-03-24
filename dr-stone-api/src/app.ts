@@ -149,7 +149,9 @@ export async function createApp(
   });
 
   app.post("/collect-due", async () => {
-    return toCollectionEnqueueResponse(await runtime.collectionJobScheduler.enqueueActiveTrackedProducts());
+    return toCollectionEnqueueResponse(
+      await runtime.collectionJobScheduler.enqueueActiveTrackedProducts({ force: true })
+    );
   });
 
   app.get("/tracked-products/:trackedProductId", async (request) => {
@@ -180,7 +182,11 @@ export async function createApp(
         }
 
         return toCollectionEnqueueResponse(
-          await runtime.collectionJobScheduler.enqueueTrackedProductsForSources([trackedProduct]),
+          await runtime.collectionJobScheduler.enqueueTrackedProductsForSources(
+            [trackedProduct],
+            undefined,
+            { force: true }
+          ),
           {
             trackedProductId: trackedProduct.id
           }

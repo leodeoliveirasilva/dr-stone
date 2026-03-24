@@ -141,25 +141,33 @@ export class CollectionJobScheduler {
     await this.boss.stop();
   }
 
-  async enqueueActiveTrackedProducts(): Promise<CollectionScheduleSummary> {
+  async enqueueActiveTrackedProducts(
+    options: { force?: boolean } = {}
+  ): Promise<CollectionScheduleSummary> {
     const trackedProducts = await this.database.trackedProducts.list({ activeOnly: true });
-    return this.enqueueTrackedProductsForSources(trackedProducts);
+    return this.enqueueTrackedProductsForSources(trackedProducts, this.sourceNames, options);
   }
 
   async enqueueTrackedProductsForSources(
     trackedProducts: TrackedProduct[],
-    sourceNames: readonly string[] = this.sourceNames
+    sourceNames: readonly string[] = this.sourceNames,
+    options: { force?: boolean } = {}
   ): Promise<CollectionScheduleSummary> {
     let scheduledCount = 0;
     let skippedCount = 0;
     const scheduledFor = new Date(this.now());
-    const sendOptions: SendOptions = {
+    const baseSendOptions: SendOptions = {
       retryLimit: Math.max(0, this.settings.maxRetries),
       retryDelay: Math.max(1, Math.round(this.settings.retryBackoffSeconds)),
       retryBackoff: this.settings.maxRetries > 1,
-      expireInSeconds: Math.max(300, this.settings.timeoutSeconds * 6),
-      singletonSeconds: Math.max(1, this.settings.intervalSeconds)
+      expireInSeconds: Math.max(300, this.settings.timeoutSeconds * 6)
     };
+    const sendOptions: SendOptions = options.force
+      ? baseSendOptions
+      : {
+          ...baseSendOptions,
+          singletonSeconds: Math.max(1, this.settings.intervalSeconds)
+        };
 
     for (const trackedProduct of trackedProducts) {
       for (const sourceName of sourceNames) {
@@ -171,13 +179,13 @@ export class CollectionJobScheduler {
           queuedAt: scheduledFor.toISOString(),
           scheduledFor: scheduledFor.toISOString()
         };
+        const jobSendOptions: SendOptions = options.force
+          ? sendOptions
+          : { ...sendOptions, singletonKey: `${trackedProduct.id}:${sourceName}` };
         const jobId = await this.boss.sendAfter(
           this.queueName,
           payload,
-          {
-            ...sendOptions,
-            singletonKey: `${trackedProduct.id}:${sourceName}`
-          },
+          jobSendOptions,
           scheduledFor
         );
 
