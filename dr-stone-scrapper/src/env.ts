@@ -28,7 +28,7 @@ export function loadScrapperSettings(overrides: Partial<ScrapperSettings> = {}):
   const intervalSeconds = overrides.intervalSeconds ?? Number(process.env.INTERVAL_SECONDS ?? "43200");
   const enabledSources = normalizeConfiguredSourceNames(
     overrides.enabledSources ??
-      String(process.env.DR_STONE_ENABLED_SOURCES ?? "kabum,amazon,pichau")
+      String(process.env.DR_STONE_ENABLED_SOURCES ?? "kabum,amazon,pichau,mercadolivre")
         .split(",")
         .map((value) => value.trim())
         .filter(Boolean)

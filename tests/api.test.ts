@@ -33,7 +33,7 @@ async function createTestApp(databaseUrl: string, enabledSources: string[] = [])
 async function persistSearchItem(input: {
   database: TestDatabase;
   trackedProductId: string;
-  sourceName: "kabum" | "amazon" | "pichau";
+  sourceName: "kabum" | "amazon" | "pichau" | "mercadolivre";
   capturedAt: string;
   price: string;
   productKey: string;
@@ -49,14 +49,20 @@ async function persistSearchItem(input: {
         }
       : input.sourceName === "amazon"
         ? {
-          searchUrl: "https://www.amazon.com.br/s?k=rx+9070+xt",
-          sellerName: input.sellerName ?? "Amazon",
-          canonicalUrl: `https://www.amazon.com.br/dp/${input.productKey}`
-        }
-        : {
-            searchUrl: "https://www.pichau.com.br/search?q=rx%209070%20xt",
-            sellerName: input.sellerName ?? "Pichau",
-            canonicalUrl: `https://www.pichau.com.br/${input.productKey}`
+            searchUrl: "https://www.amazon.com.br/s?k=rx+9070+xt",
+            sellerName: input.sellerName ?? "Amazon",
+            canonicalUrl: `https://www.amazon.com.br/dp/${input.productKey}`
+          }
+        : input.sourceName === "pichau"
+          ? {
+              searchUrl: "https://www.pichau.com.br/search?q=rx%209070%20xt",
+              sellerName: input.sellerName ?? "Pichau",
+              canonicalUrl: `https://www.pichau.com.br/${input.productKey}`
+            }
+          : {
+              searchUrl: "https://lista.mercadolivre.com.br/rx-9070-xt",
+              sellerName: input.sellerName ?? "Mercado Livre",
+              canonicalUrl: `https://www.mercadolivre.com.br/p/${input.productKey}`
           };
 
   const searchRunId = await input.database.searchRuns.create({
@@ -108,7 +114,7 @@ describe("api manual collection queue", () => {
       updatedAt: "2026-03-19T00:00:00.000Z"
     };
     const enqueueTrackedProductsForSources = vi.fn(async () => ({
-      scheduledCount: 3,
+      scheduledCount: 4,
       skippedCount: 0
     }));
     const stop = vi.fn(async () => {});
@@ -129,7 +135,7 @@ describe("api manual collection queue", () => {
           logLevel: "silent",
           userAgent: "test",
           intervalSeconds: 43200,
-          enabledSources: ["kabum", "amazon", "pichau"]
+          enabledSources: ["kabum", "amazon", "pichau", "mercadolivre"]
         }
       },
       {
@@ -163,7 +169,7 @@ describe("api manual collection queue", () => {
       expect(response.statusCode).toBe(200);
       expect(response.json()).toEqual({
         tracked_product_id: trackedProduct.id,
-        enqueued_jobs: 3,
+        enqueued_jobs: 4,
         skipped_jobs: 0
       });
       expect(enqueueTrackedProductsForSources).toHaveBeenCalledWith(
@@ -343,6 +349,11 @@ describeWithDatabase("api", () => {
               source_name: "pichau",
               source_label: "Pichau",
               active: true
+            },
+            {
+              source_name: "mercadolivre",
+              source_label: "Mercado Livre",
+              active: false
             }
           ]
         });

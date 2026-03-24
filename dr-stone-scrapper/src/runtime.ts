@@ -8,6 +8,7 @@ import {
 import { HttpFetcher } from "./http/http-fetcher.js";
 import { AmazonSource } from "./sources/amazon/amazon-source.js";
 import { KabumSource } from "./sources/kabum/kabum-source.js";
+import { MercadoLivreSource } from "./sources/mercadolivre/mercadolivre-source.js";
 import { PichauSource } from "./sources/pichau/pichau-source.js";
 import type { LoggerLike, ScrapperSettings, SearchSource } from "./types.js";
 import { SearchCollectionService } from "./services/search-collection-service.js";
@@ -36,6 +37,10 @@ export function buildSearchSources(
 
   if (enabled.has("pichau")) {
     sources.push(new PichauSource(settings, logger));
+  }
+
+  if (enabled.has("mercadolivre")) {
+    sources.push(new MercadoLivreSource(settings, logger));
   }
 
   return sources;
