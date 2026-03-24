@@ -65,7 +65,7 @@ const MAX_PAGE_VISITS = 20;
 const MAX_SEARCH_ATTEMPTS = 3;
 const PAGE_NAVIGATION_TIMEOUT_MS = 45_000;
 const WARM_UP_URL = "https://www.mercadolivre.com.br/";
-const WARM_UP_NAVIGATION_TIMEOUT_MS = 30_000;
+const WARM_UP_NAVIGATION_TIMEOUT_MS = 60_000;
 const WARM_UP_SETTLE_MS = 5_000;
 const COOKIE_CONSENT_TIMEOUT_MS = 3_000;
 
@@ -235,6 +235,8 @@ export class MercadoLivreSource implements SearchSource {
       });
       responseStatus = response?.status() ?? null;
       await this.settlePage(page);
+
+      await this.recoverFromAccountVerification(page, searchUrl);
 
       const firstPage = await this.extractPageWithListingWait(page, responseStatus);
       if (firstPage.items.length === 0) {
@@ -471,24 +473,52 @@ export class MercadoLivreSource implements SearchSource {
       "mercadolivre_warmup_started"
     );
 
-    await page.goto(WARM_UP_URL, {
-      waitUntil: "domcontentloaded",
-      timeout: WARM_UP_NAVIGATION_TIMEOUT_MS
+    const warmUpSucceeded = await this.safeRead(async () => {
+      await page.goto(WARM_UP_URL, {
+        waitUntil: "domcontentloaded",
+        timeout: WARM_UP_NAVIGATION_TIMEOUT_MS
+      });
+
+      await this.safeRead(async () => {
+        await page.waitForLoadState("networkidle", { timeout: 15_000 });
+      });
+
+      await page.waitForTimeout(WARM_UP_SETTLE_MS);
+      await this.acceptCookieConsent(page);
+      return true;
     });
-
-    await this.safeRead(async () => {
-      await page.waitForLoadState("networkidle", { timeout: WARM_UP_NAVIGATION_TIMEOUT_MS });
-    });
-
-    await page.waitForTimeout(WARM_UP_SETTLE_MS);
-
-    await this.acceptCookieConsent(page);
 
     const finalUrl = page.url();
     this.logger.info(
-      { event: "mercadolivre_warmup_completed", finalUrl },
-      "mercadolivre_warmup_completed"
+      {
+        event: warmUpSucceeded
+          ? "mercadolivre_warmup_completed"
+          : "mercadolivre_warmup_failed",
+        finalUrl,
+        warmUpSucceeded: Boolean(warmUpSucceeded)
+      },
+      warmUpSucceeded ? "mercadolivre_warmup_completed" : "mercadolivre_warmup_failed"
     );
+  }
+
+  private async recoverFromAccountVerification(page: Page, searchUrl: string): Promise<void> {
+    const currentUrl = page.url().toLocaleLowerCase();
+    if (!currentUrl.includes("/gz/account-verification")) {
+      return;
+    }
+
+    this.logger.info(
+      { event: "mercadolivre_account_verification_recovery", currentUrl: page.url(), searchUrl },
+      "mercadolivre_account_verification_recovery"
+    );
+
+    await this.acceptCookieConsent(page);
+
+    await page.goto(searchUrl, {
+      waitUntil: "domcontentloaded",
+      timeout: PAGE_NAVIGATION_TIMEOUT_MS
+    });
+    await this.settlePage(page);
   }
 
   private async acceptCookieConsent(page: Page): Promise<void> {
