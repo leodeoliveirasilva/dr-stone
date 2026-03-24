@@ -78,7 +78,7 @@ Goal: expose scraping and history data through a Railway-hosted backend.
 - [x] Add endpoint to list tracked products
 - [x] Add endpoint to fetch product price history
 - [x] Add endpoint to query search runs by date
-- [ ] Add explicit API schema docs maintained with backend changes
+- [x] Add explicit API schema docs maintained with backend changes
 
 Definition of done:
 
@@ -89,13 +89,13 @@ Definition of done:
 
 Goal: run collection without manual commands.
 
-- [ ] Define scrape frequency rules by tracked search term
+- [ ] Define scrape frequency rules by tracked search term (schema field exists but scheduler uses global interval only)
 - [x] Run each tracked search every 12 hours by default
-- [ ] Add scheduled trigger support for scraping
-- [ ] Prevent overlapping or duplicate scheduled runs
-- [ ] Retry transient failures with explicit limits
-- [ ] Track run counts, durations, and failure rates
-- [ ] Add operational view of latest scrape status per source
+- [x] Add scheduled trigger support for scraping
+- [x] Prevent overlapping or duplicate scheduled runs
+- [x] Retry transient failures with explicit limits
+- [x] Track run counts, durations, and failure rates
+- [ ] Add operational view of latest scrape status per source (/search-runs exists but no per-source status summary)
 
 Definition of done:
 
@@ -108,8 +108,8 @@ Goal: run backend MVP on Railway with clear operating limits.
 
 - [x] Configure Railway deployment pipeline
 - [x] Bind Postgres database to API environment
-- [ ] Configure development and production environments explicitly
-- [ ] Configure scheduled scraping in production
+- [x] Configure development and production environments explicitly
+- [x] Configure scheduled scraping in production
 - [ ] Monitor request volume and database usage
 - [ ] Document hosting and scrape-rate limits affecting collection frequency
 
@@ -122,12 +122,12 @@ Definition of done:
 
 Goal: make backend stable enough for continuous use.
 
-- [ ] Expand automated tests for services, adapters, and API responses
-- [ ] Add structured logs across scrape, persistence, and API layers
-- [ ] Add polite delays and rate limits per source
-- [ ] Review robots.txt and terms before enabling each source
-- [ ] Add operational docs for debugging failed scrapes
-- [ ] Define clear criteria to escalate from HTTP-first scraping to browser rendering
+- [ ] Expand automated tests for services, adapters, and API responses (API + scheduler + pichau + worker covered; kabum/amazon adapters lack dedicated tests)
+- [x] Add structured logs across scrape, persistence, and API layers
+- [x] Add polite delays and rate limits per source (global REQUEST_DELAY_SECONDS; per-source limits not yet implemented)
+- [x] Review robots.txt and terms before enabling each source
+- [ ] Add operational docs for debugging failed scrapes (partial coverage in CRAWLING.md and source docs)
+- [x] Define clear criteria to escalate from HTTP-first scraping to browser rendering
 
 Definition of done:
 

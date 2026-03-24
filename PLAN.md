@@ -1,5 +1,13 @@
 # Dr. Stone TypeScript Service Migration Plan
 
+> **Status: COMPLETED** - This migration plan was fully executed. The repository is now 100% TypeScript with no Python code remaining. This document is kept as historical context for architectural decisions made during the migration.
+>
+> Notable deviations from the original plan:
+> - **Drizzle ORM** was chosen instead of Kysely for database access
+> - **Node.js 24.14.0** is used instead of the originally planned Node.js 22
+> - **pg-boss** was added for job queue management in the worker
+> - **Pichau** was added as a third source adapter (not in original plan)
+
 ## Goal
 
 Migrate the current single-package Python application into a TypeScript monorepo with:

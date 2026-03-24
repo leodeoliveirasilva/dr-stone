@@ -3,13 +3,11 @@ name: Validate And Deploy
 on:
   pull_request:
   push:
-    branches:
-      - master
   workflow_dispatch:
 
 concurrency:
-  group: production-deploy
-  cancel-in-progress: false
+  group: ${{ github.ref == 'refs/heads/master' && 'production-deploy' || format('validate-{0}', github.ref) }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
 
 jobs:
   validate:

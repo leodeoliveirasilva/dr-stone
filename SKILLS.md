@@ -1,39 +1,45 @@
 # Local Test Runs
 
-Use Docker Compose for the full local test workflow in this repository.
-
 ## Prerequisites
 
-- Docker and Docker Compose must be installed.
-- `.env` is optional at the repo root.
-- If you need to override the default Compose database URL locally, define `TEST_DATABASE_URL` in `.env`:
+- Node.js 24.14.0 (via `nvm use`)
+- pnpm via Corepack (`corepack enable`)
+- Docker and Docker Compose for the test Postgres instance
+
+## Start The Test Database
 
 ```bash
-TEST_DATABASE_URL=postgresql://dr_stone:dr_stone@postgres:5432/dr_stone_test
+docker compose up -d postgres
 ```
+
+This starts Postgres on `127.0.0.1:15432`.
+
+## Set The Test Database URL
+
+```bash
+export TEST_DATABASE_URL=postgresql://dr_stone:dr_stone@127.0.0.1:15432/dr_stone_test
+```
+
+Or add it to your `.env` file at the repo root.
 
 ## Run The Full Test Suite
 
 ```bash
-docker compose run --build --rm tests
+pnpm test
 ```
 
-What this does:
-
-- starts the `postgres` service defined in [docker-compose.yml](/home/leonardo-silva/workspace/personal/dr-stone/docker-compose.yml)
-- builds the Python 3.12 test image from [docker/test.Dockerfile](/home/leonardo-silva/workspace/personal/dr-stone/docker/test.Dockerfile)
-- runs `python -m pytest` inside the container
+This runs `vitest run` against all test files in `tests/`.
 
 ## Run A Specific Test File
 
 ```bash
-docker compose run --build --rm tests tests/test_api.py
+pnpm exec vitest run tests/api.test.ts
 ```
 
 ## Run A Filtered Test Selection
 
 ```bash
-docker compose run --build --rm tests tests/test_api.py -k price_history_minimums
+pnpm exec vitest run tests/api.test.ts -t "price_history_minimums"
 ```
 
 ## Useful Cleanup
@@ -44,13 +50,14 @@ Stop Compose services:
 docker compose down
 ```
 
-Remove containers, networks, and volumes if you want a clean database state:
+Remove containers, networks, and volumes for a clean database state:
 
 ```bash
 docker compose down -v
 ```
 
-## Notes For New API Endpoints
+## Notes
 
-- If a test depends on Postgres fixtures, run it through Docker Compose instead of the incomplete local `.venv`.
-- Prefer adding a focused `tests/test_api.py -k ...` command while iterating, then finish with the full suite.
+- Tests require a running Postgres instance. Always start the Docker Compose Postgres service before running tests.
+- Prefer running a specific test file with `-t` filter while iterating, then finish with the full suite.
+- CI uses a GitHub Actions Postgres service container instead of Docker Compose.

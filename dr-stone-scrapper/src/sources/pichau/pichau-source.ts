@@ -219,6 +219,7 @@ export class PichauSource implements SearchSource {
     routeUrl: string
   ): Promise<PichauSearchRouteOutcome> {
     const page = await context.newPage();
+    await this.blockChallengeScripts(page);
     let responseStatus: number | null = null;
 
     try {
@@ -240,6 +241,7 @@ export class PichauSource implements SearchSource {
       const items = [...firstPage.items];
       for (let pageNumber = 2; pageNumber <= firstPage.diagnostics.totalPages; pageNumber += 1) {
         const paginatedPage = await context.newPage();
+        await this.blockChallengeScripts(paginatedPage);
         try {
           const pageUrl = this.withPageNumber(firstPage.finalUrl, pageNumber);
           const paginatedResponse = await paginatedPage.goto(pageUrl, {
@@ -296,6 +298,10 @@ export class PichauSource implements SearchSource {
     } finally {
       await page.close();
     }
+  }
+
+  private async blockChallengeScripts(page: Page): Promise<void> {
+    await page.route("**/cdn-cgi/challenge-platform/**", (route) => route.abort());
   }
 
   private async settlePage(page: Page): Promise<void> {

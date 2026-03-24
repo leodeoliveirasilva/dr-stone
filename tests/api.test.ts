@@ -166,7 +166,11 @@ describe("api manual collection queue", () => {
         enqueued_jobs: 3,
         skipped_jobs: 0
       });
-      expect(enqueueTrackedProductsForSources).toHaveBeenCalledWith([trackedProduct]);
+      expect(enqueueTrackedProductsForSources).toHaveBeenCalledWith(
+        [trackedProduct],
+        undefined,
+        { force: true }
+      );
     } finally {
       await app.close();
     }

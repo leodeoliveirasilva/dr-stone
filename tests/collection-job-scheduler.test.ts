@@ -124,5 +124,57 @@ describe("collection job scheduler", () => {
       "prod-2:amazon",
       "prod-2:pichau"
     ]);
+    expect(boss.jobs.every((job) => job.options?.singletonSeconds === 43200)).toBe(true);
+  });
+
+  test("force option bypasses singleton throttle", async () => {
+    const boss = new FakeBoss();
+    const scheduler = new CollectionJobScheduler(
+      {
+        databaseUrl: "postgresql://test",
+        timeoutSeconds: 15,
+        maxRetries: 2,
+        retryBackoffSeconds: 1,
+        requestDelaySeconds: 0.5,
+        proxyServer: "http://127.0.0.1:3128",
+        proxyUsername: "proxyuser",
+        proxyPassword: "proxy-password",
+        logLevel: "silent",
+        userAgent: "test",
+        intervalSeconds: 43200,
+        enabledSources: ["kabum", "amazon", "pichau"]
+      },
+      {
+        trackedProducts: {
+          list: async () => [],
+          getById: async () => null
+        }
+      } as never,
+      createLogger("silent"),
+      ["kabum", "amazon", "pichau"],
+      {
+        boss,
+        now: () => Date.parse("2026-03-19T18:00:00.000Z")
+      }
+    );
+
+    const summary = await scheduler.enqueueTrackedProductsForSources(
+      [
+        {
+          id: "prod-1",
+          productTitle: "RTX 5070 TI",
+          searchTerms: ["RTX", "5070", "TI"],
+          active: true,
+          createdAt: "2026-03-19T00:00:00.000Z",
+          updatedAt: "2026-03-19T00:00:00.000Z"
+        }
+      ],
+      undefined,
+      { force: true }
+    );
+
+    expect(summary).toEqual({ scheduledCount: 3, skippedCount: 0 });
+    expect(boss.jobs.every((job) => job.options?.singletonKey === undefined)).toBe(true);
+    expect(boss.jobs.every((job) => job.options?.singletonSeconds === undefined)).toBe(true);
   });
 });
