@@ -28,6 +28,12 @@ pnpm start:api          # API on default port
 pnpm start:worker       # Worker continuous loop
 pnpm worker:once        # Worker single run
 
+# Exercise a single scrapper without DB/queue
+pnpm source:run kabum "rtx 4070"
+pnpm source:run amazon "echo dot"
+pnpm source:run pichau "rtx 4070"
+pnpm source:run mercadolivre "echo dot"
+
 # Run migrations
 pnpm migrate
 ```
@@ -117,11 +123,12 @@ CI uses a GitHub Actions Postgres service container.
 Copy `.env.example` to `.env` and populate. Key required variables:
 
 - `DATABASE_URL` - Production Postgres connection string
-- `PROXY_SERVER`, `PROXY_USER`, `PROXY_PASSWORD` - Required for browser-backed sources
+- `PROXY_SERVER`, `PROXY_USER`, `PROXY_PASSWORD` - Optional; currently disabled.
+  Setting all three re-enables proxy routing for browser-backed sources
+  (`amazon`, `pichau`, `mercadolivre`). When any is empty/unset the sources
+  connect directly (see `dr-stone-scrapper/src/browser/playwright.ts`).
 - `TEST_DATABASE_URL` - Test database (local: `postgresql://dr_stone:dr_stone@127.0.0.1:15432/dr_stone_test`)
-- `DR_STONE_ENABLED_SOURCES` - Comma-separated source list (default: `kabum,amazon,pichau`)
-
-App boot fails immediately if required proxy variables are missing.
+- `DR_STONE_ENABLED_SOURCES` - Comma-separated source list (default: `kabum,amazon,pichau,mercadolivre`)
 
 ## Deployment
 

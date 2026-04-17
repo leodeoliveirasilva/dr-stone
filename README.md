@@ -38,11 +38,12 @@ cp .env.example .env
 Populate at least:
 
 - `DATABASE_URL`
-- `PROXY_SERVER`
-- `PROXY_USER`
-- `PROXY_PASSWORD`
 
-If any required proxy variable is missing, application boot fails immediately.
+Proxy support (`PROXY_SERVER`, `PROXY_USER`, `PROXY_PASSWORD`) is currently
+**disabled** to avoid the recurring infra cost. The proxy plumbing is still in
+the codebase — set all three variables again to re-enable it for the
+browser-backed sources (`amazon`, `pichau`, `mercadolivre`). When unset the
+sources connect directly.
 
 ## Local Postgres
 
@@ -88,6 +89,32 @@ Run the worker continuously:
 ```bash
 pnpm start:worker
 ```
+
+## Running a Single Scrapper Locally
+
+Use `source:run` to exercise one source adapter end-to-end without the
+database/queue pipeline. Output is the raw `SearchRunResult` JSON, preceded by
+Pino log lines on stderr.
+
+```bash
+pnpm build
+pnpm source:run kabum "rtx 4070"
+pnpm source:run amazon "echo dot"
+pnpm source:run pichau "rtx 4070"
+pnpm source:run mercadolivre "echo dot"
+```
+
+Notes:
+
+- Requires a working internet connection and (for non-`kabum` sources) the
+  Playwright Chromium browser (installed by `pnpm install`).
+- `DATABASE_URL` is not needed — the script uses a dummy connection string
+  because no DB writes happen.
+- To exercise the proxy path, set `PROXY_SERVER`, `PROXY_USER`, and
+  `PROXY_PASSWORD` in the environment before running. Leave them unset (or
+  empty) to connect directly.
+- `kabum` uses plain HTTP; the other three launch Playwright Chromium.
+- `mercadolivre` performs a homepage warm-up first — expect ~30s per run.
 
 ## API
 

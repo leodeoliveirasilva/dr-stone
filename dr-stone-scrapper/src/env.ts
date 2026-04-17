@@ -12,18 +12,13 @@ export function loadScrapperSettings(overrides: Partial<ScrapperSettings> = {}):
   if (!databaseUrl) {
     throw new Error("DATABASE_URL is required");
   }
-  const proxyServer = overrides.proxyServer ?? process.env.PROXY_SERVER?.trim();
-  if (!proxyServer) {
-    throw new Error("PROXY_SERVER is required");
-  }
-  const proxyUsername = overrides.proxyUsername ?? process.env.PROXY_USER?.trim();
-  if (!proxyUsername) {
-    throw new Error("PROXY_USER is required");
-  }
-  const proxyPassword = overrides.proxyPassword ?? process.env.PROXY_PASSWORD?.trim();
-  if (!proxyPassword) {
-    throw new Error("PROXY_PASSWORD is required");
-  }
+  // Proxy is currently disabled. Leaving the plumbing in place so it can be
+  // re-enabled by simply setting PROXY_SERVER / PROXY_USER / PROXY_PASSWORD.
+  // When any proxy env var is empty, browser-backed sources route requests
+  // directly (see buildBrowserLaunchOptions in src/browser/playwright.ts).
+  const proxyServer = overrides.proxyServer ?? process.env.PROXY_SERVER?.trim() ?? "";
+  const proxyUsername = overrides.proxyUsername ?? process.env.PROXY_USER?.trim() ?? "";
+  const proxyPassword = overrides.proxyPassword ?? process.env.PROXY_PASSWORD?.trim() ?? "";
 
   const intervalSeconds = overrides.intervalSeconds ?? Number(process.env.INTERVAL_SECONDS ?? "43200");
   const enabledSources = normalizeConfiguredSourceNames(
