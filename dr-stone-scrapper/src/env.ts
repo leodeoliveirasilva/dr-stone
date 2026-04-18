@@ -1,6 +1,6 @@
 import process from "node:process";
 
-import { normalizeConfiguredSourceNames } from "@dr-stone/database";
+import { listKnownSources, normalizeConfiguredSourceNames } from "@dr-stone/database";
 
 import type { ScrapperSettings } from "./types.js";
 
@@ -19,6 +19,19 @@ export function loadScrapperSettings(overrides: Partial<ScrapperSettings> = {}):
   const proxyServer = overrides.proxyServer ?? process.env.PROXY_SERVER?.trim() ?? "";
   const proxyUsername = overrides.proxyUsername ?? process.env.PROXY_USER?.trim() ?? "";
   const proxyPassword = overrides.proxyPassword ?? process.env.PROXY_PASSWORD?.trim() ?? "";
+  // Per-source opt-out: sources listed here route directly even when the
+  // global proxy is configured. Sources without proxy support ignore this.
+  // Default disables every known source — set the env var explicitly (even
+  // to an empty string) to opt sources back into the proxy.
+  const proxyDisabledSourcesRaw = process.env.DR_STONE_PROXY_DISABLED_SOURCES;
+  const proxyDisabledSources =
+    overrides.proxyDisabledSources ??
+    (proxyDisabledSourcesRaw === undefined
+      ? listKnownSources().map((source) => source.sourceName)
+      : proxyDisabledSourcesRaw
+          .split(",")
+          .map((value) => value.trim().toLowerCase())
+          .filter(Boolean));
 
   const intervalSeconds = overrides.intervalSeconds ?? Number(process.env.INTERVAL_SECONDS ?? "43200");
   const enabledSources = normalizeConfiguredSourceNames(
@@ -40,6 +53,7 @@ export function loadScrapperSettings(overrides: Partial<ScrapperSettings> = {}):
     proxyServer,
     proxyUsername,
     proxyPassword,
+    proxyDisabledSources,
     logLevel: overrides.logLevel ?? String(process.env.LOG_LEVEL ?? "info").toLowerCase(),
     userAgent: overrides.userAgent ?? String(process.env.USER_AGENT ?? DEFAULT_USER_AGENT),
     intervalSeconds,

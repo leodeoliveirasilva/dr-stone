@@ -25,6 +25,7 @@ export interface ScrapperSettings {
   proxyServer: string;
   proxyUsername: string;
   proxyPassword: string;
+  proxyDisabledSources: string[];
   logLevel: string;
   userAgent: string;
   intervalSeconds: number;

@@ -5,6 +5,7 @@ import {
   normalizeConfiguredSourceNames
 } from "@dr-stone/database";
 
+import { resolveSourceProxySettings } from "./browser/playwright.js";
 import { HttpFetcher } from "./http/http-fetcher.js";
 import { AmazonSource } from "./sources/amazon/amazon-source.js";
 import { KabumSource } from "./sources/kabum/kabum-source.js";
@@ -32,15 +33,15 @@ export function buildSearchSources(
   }
 
   if (enabled.has("amazon")) {
-    sources.push(new AmazonSource(settings, logger));
+    sources.push(new AmazonSource(resolveSourceProxySettings("amazon", settings), logger));
   }
 
   if (enabled.has("pichau")) {
-    sources.push(new PichauSource(settings, logger));
+    sources.push(new PichauSource(resolveSourceProxySettings("pichau", settings), logger));
   }
 
   if (enabled.has("mercadolivre")) {
-    sources.push(new MercadoLivreSource(settings, logger));
+    sources.push(new MercadoLivreSource(resolveSourceProxySettings("mercadolivre", settings), logger));
   }
 
   return sources;
