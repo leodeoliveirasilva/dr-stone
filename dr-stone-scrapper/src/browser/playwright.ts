@@ -31,6 +31,24 @@ export function buildBrowserLaunchOptions(
   };
 }
 
+type ProxySettingsShape = Pick<
+  ScrapperSettings,
+  "proxyServer" | "proxyUsername" | "proxyPassword" | "proxyDisabledSources"
+>;
+
+export function resolveSourceProxySettings<T extends ProxySettingsShape>(
+  sourceName: string,
+  settings: T
+): T {
+  const disabled = settings.proxyDisabledSources.some(
+    (entry) => entry.toLowerCase() === sourceName.toLowerCase()
+  );
+  if (!disabled) {
+    return settings;
+  }
+  return { ...settings, proxyServer: "", proxyUsername: "", proxyPassword: "" };
+}
+
 export function buildProxyUsername(
   proxyUsername: string | null | undefined,
   proxySessionId: string | null | undefined

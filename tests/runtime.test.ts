@@ -14,6 +14,7 @@ const baseSettings: ScrapperSettings = {
   proxyServer: "http://127.0.0.1:3128",
   proxyUsername: "proxyuser",
   proxyPassword: "proxy-password",
+  proxyDisabledSources: [],
   logLevel: "silent",
   userAgent: "test",
   intervalSeconds: 43200,

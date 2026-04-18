@@ -2,6 +2,7 @@ import process from "node:process";
 
 import { listKnownSources } from "@dr-stone/database";
 
+import { resolveSourceProxySettings } from "../browser/playwright.js";
 import { loadScrapperSettings } from "../env.js";
 import { createLogger } from "../logger.js";
 import { buildSearchSources } from "../runtime.js";
@@ -61,7 +62,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       source: source.sourceName,
       strategy: source.strategy,
       searchTerm,
-      proxyConfigured: Boolean(settings.proxyServer)
+      proxyConfigured: Boolean(resolveSourceProxySettings(sourceName, settings).proxyServer)
     },
     "run_source_started"
   );

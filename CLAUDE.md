@@ -127,6 +127,11 @@ Copy `.env.example` to `.env` and populate. Key required variables:
   Setting all three re-enables proxy routing for browser-backed sources
   (`amazon`, `pichau`, `mercadolivre`). When any is empty/unset the sources
   connect directly (see `dr-stone-scrapper/src/browser/playwright.ts`).
+- `DR_STONE_PROXY_DISABLED_SOURCES` - Comma-separated list of source names
+  that route directly even when the global proxy is configured. Sources
+  without proxy support ignore this. Default (when unset): all known
+  sources are disabled. Set to an empty string to opt every source back
+  into the proxy.
 - `TEST_DATABASE_URL` - Test database (local: `postgresql://dr_stone:dr_stone@127.0.0.1:15432/dr_stone_test`)
 - `DR_STONE_ENABLED_SOURCES` - Comma-separated source list (default: `kabum,amazon,pichau,mercadolivre`)
 
@@ -154,3 +159,74 @@ Copy `.env.example` to `.env` and populate. Key required variables:
 - Keep changes minimal and scoped - no unrelated refactors
 - Prefer integration tests over unit tests for observable behavior
 - Update tests and docs when changing behavior
+
+## Pull Request Workflow
+
+When asked to open a PR, follow this workflow end-to-end. Don't push to
+`master` directly — always go through a feature branch.
+
+### Branching
+
+- Create a branch from `master` named `<type>/<short-slug>`, where
+  `<type>` is `feat`, `fix`, `chore`, `docs`, `test`, or `refactor`.
+- Keep slugs short and kebab-case (e.g. `feat/proxy-disabled-sources`).
+
+### Smart commits (group by intent)
+
+Split the working tree into logical commits — never one big "everything"
+commit. Common groupings for a single PR:
+
+1. **Production code** for the change (one commit per cohesive concern).
+2. **Tests** that exercise or fix coverage for the change.
+3. **Docs** (`.env.example`, `CLAUDE.md`, `docs/**`) describing the change.
+4. **Tooling / config** (CI, lint, build) if touched.
+
+Stage files explicitly with `git add <file> ...` per group — never
+`git add -A`. Verify with `git status` between commits.
+
+### Commit message style (Conventional Commits)
+
+```
+<type>(<scope>): <imperative subject ≤ 70 chars>
+```
+
+- **type**: `feat`, `fix`, `chore`, `docs`, `test`, `refactor`, `perf`.
+- **scope**: package or area (`scrapper`, `api`, `database`, `claude`,
+  `ci`). Omit if truly cross-cutting.
+- **subject**: lowercase, imperative ("add", not "added"), no trailing
+  period, focuses on the *what*.
+- **Default to subject-only**. Skip the body — the *why* lives in the PR
+  description. Add a body only when the change is non-obvious *and* the
+  rationale won't appear elsewhere; wrap at ~72 chars when you do.
+- Always include the standard `Co-Authored-By` trailer.
+
+### Validation before pushing
+
+Run, in order, and only push when all green:
+
+```bash
+pnpm lint
+pnpm typecheck
+pnpm test
+```
+
+For UI- or scraper-affecting work, also run the relevant `pnpm source:run`
+or local smoke test and mention the result in the PR body.
+
+### Pushing and opening the PR
+
+- Push with `git push -u origin <branch>`.
+- Open the PR with `gh pr create` using a HEREDOC body.
+- **PR title**: short (≤ 70 chars), mirrors the lead commit, no scope
+  prefix needed.
+- **PR body** sections:
+  - `## Summary` — 1–4 bullets describing what changed and why.
+  - `## Test plan` — markdown checklist of validations performed
+    (`pnpm lint`, `pnpm typecheck`, `pnpm test`, local smoke tests).
+- Return the PR URL when done.
+
+### Confirmation rule
+
+Pushing and PR creation affect shared state. Treat them as authorized
+when the user explicitly asks for a PR, but always confirm before any
+destructive follow-up (force push, branch delete, merge).
