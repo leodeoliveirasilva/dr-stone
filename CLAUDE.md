@@ -194,8 +194,10 @@ Stage files explicitly with `git add <file> ...` per group — never
 - **scope**: package or area (`scrapper`, `api`, `database`, `claude`,
   `ci`). Omit if truly cross-cutting.
 - **subject**: lowercase, imperative ("add", not "added"), no trailing
-  period, focuses on the *what* (the *why* goes in the body if needed).
-- Body is optional. When present, wrap at ~72 chars and explain the *why*.
+  period, focuses on the *what*.
+- **Default to subject-only**. Skip the body — the *why* lives in the PR
+  description. Add a body only when the change is non-obvious *and* the
+  rationale won't appear elsewhere; wrap at ~72 chars when you do.
 - Always include the standard `Co-Authored-By` trailer.
 
 ### Validation before pushing
