@@ -127,6 +127,11 @@ Copy `.env.example` to `.env` and populate. Key required variables:
   Setting all three re-enables proxy routing for browser-backed sources
   (`amazon`, `pichau`, `mercadolivre`). When any is empty/unset the sources
   connect directly (see `dr-stone-scrapper/src/browser/playwright.ts`).
+- `DR_STONE_PROXY_DISABLED_SOURCES` - Comma-separated list of source names
+  that route directly even when the global proxy is configured. Sources
+  without proxy support ignore this. Default (when unset): all known
+  sources are disabled. Set to an empty string to opt every source back
+  into the proxy.
 - `TEST_DATABASE_URL` - Test database (local: `postgresql://dr_stone:dr_stone@127.0.0.1:15432/dr_stone_test`)
 - `DR_STONE_ENABLED_SOURCES` - Comma-separated source list (default: `kabum,amazon,pichau,mercadolivre`)
 
