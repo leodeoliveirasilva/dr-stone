@@ -18,7 +18,8 @@ const baseSettings: ScrapperSettings = {
   logLevel: "silent",
   userAgent: "test",
   intervalSeconds: 43200,
-  enabledSources: ["kabum"]
+  enabledSources: ["kabum"],
+  blockHeavyResources: true
 };
 
 describe("runtime source selection", () => {

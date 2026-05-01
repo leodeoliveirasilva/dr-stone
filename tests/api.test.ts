@@ -26,7 +26,8 @@ async function createTestApp(databaseUrl: string, enabledSources: string[] = [])
       logLevel: "silent",
       userAgent: "test",
       intervalSeconds: 43200,
-      enabledSources
+      enabledSources,
+      blockHeavyResources: true
     }
   });
 }
@@ -137,7 +138,8 @@ describe("api manual collection queue", () => {
           logLevel: "silent",
           userAgent: "test",
           intervalSeconds: 43200,
-          enabledSources: ["kabum", "amazon", "pichau", "mercadolivre"]
+          enabledSources: ["kabum", "amazon", "pichau", "mercadolivre"],
+          blockHeavyResources: true
         }
       },
       {

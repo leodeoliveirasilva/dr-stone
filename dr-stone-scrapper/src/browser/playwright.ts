@@ -115,9 +115,11 @@ export function buildProxyUsername(
   return `${normalizedUsername}-session-${normalizedSessionId}`;
 }
 
+const HEAVY_RESOURCE_TYPES = new Set(["image", "font", "media"]);
+
 export async function createStealthBrowserContext(
   browser: Browser,
-  settings: Pick<ScrapperSettings, "userAgent">
+  settings: Pick<ScrapperSettings, "userAgent" | "blockHeavyResources">
 ): Promise<BrowserContext> {
   const context = await browser.newContext({
     locale: "pt-BR",
@@ -129,6 +131,15 @@ export async function createStealthBrowserContext(
       "accept-language": DEFAULT_ACCEPT_LANGUAGE
     }
   });
+
+  if (settings.blockHeavyResources) {
+    await context.route("**/*", (route, request) => {
+      if (HEAVY_RESOURCE_TYPES.has(request.resourceType())) {
+        return route.abort();
+      }
+      return route.continue();
+    });
+  }
 
   await context.addInitScript(() => {
     Object.defineProperty(navigator, "webdriver", {

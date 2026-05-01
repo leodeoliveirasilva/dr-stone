@@ -62,7 +62,8 @@ describe("collection job scheduler", () => {
         logLevel: "silent",
         userAgent: "test",
         intervalSeconds: 43200,
-        enabledSources: ["kabum", "amazon", "pichau", "mercadolivre"]
+        enabledSources: ["kabum", "amazon", "pichau", "mercadolivre"],
+        blockHeavyResources: true
       },
       {
         trackedProducts: {
@@ -150,7 +151,8 @@ describe("collection job scheduler", () => {
         logLevel: "silent",
         userAgent: "test",
         intervalSeconds: 43200,
-        enabledSources: ["kabum", "amazon", "pichau", "mercadolivre"]
+        enabledSources: ["kabum", "amazon", "pichau", "mercadolivre"],
+        blockHeavyResources: true
       },
       {
         trackedProducts: {

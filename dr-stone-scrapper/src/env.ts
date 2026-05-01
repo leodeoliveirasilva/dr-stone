@@ -34,6 +34,14 @@ export function loadScrapperSettings(overrides: Partial<ScrapperSettings> = {}):
           .filter(Boolean));
 
   const intervalSeconds = overrides.intervalSeconds ?? Number(process.env.INTERVAL_SECONDS ?? "43200");
+  // Browser-backed sources abort image/font/media requests by default to keep
+  // proxy bandwidth low. Listings parse from HTML/anchor tags, so blocking
+  // these resource types does not affect extraction. Set to "false" to opt
+  // out (e.g. while debugging anti-bot detection).
+  const blockHeavyResourcesRaw = process.env.DR_STONE_BLOCK_HEAVY_RESOURCES?.trim().toLowerCase();
+  const blockHeavyResources =
+    overrides.blockHeavyResources ??
+    (blockHeavyResourcesRaw === undefined ? true : blockHeavyResourcesRaw !== "false" && blockHeavyResourcesRaw !== "0");
   const enabledSources = normalizeConfiguredSourceNames(
     overrides.enabledSources ??
       String(process.env.DR_STONE_ENABLED_SOURCES ?? "kabum,amazon,pichau,mercadolivre")
@@ -57,6 +65,7 @@ export function loadScrapperSettings(overrides: Partial<ScrapperSettings> = {}):
     logLevel: overrides.logLevel ?? String(process.env.LOG_LEVEL ?? "info").toLowerCase(),
     userAgent: overrides.userAgent ?? String(process.env.USER_AGENT ?? DEFAULT_USER_AGENT),
     intervalSeconds,
-    enabledSources
+    enabledSources,
+    blockHeavyResources
   };
 }
