@@ -31,7 +31,7 @@ export class AmazonSource implements SearchSource {
   constructor(
     private readonly settings: Pick<
       ScrapperSettings,
-      "proxyServer" | "proxyUsername" | "proxyPassword" | "userAgent"
+      "proxyServer" | "proxyUsername" | "proxyPassword" | "userAgent" | "blockHeavyResources"
     >,
     private readonly logger: LoggerLike
   ) {

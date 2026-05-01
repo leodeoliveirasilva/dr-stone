@@ -30,6 +30,7 @@ export interface ScrapperSettings {
   userAgent: string;
   intervalSeconds: number;
   enabledSources: string[];
+  blockHeavyResources: boolean;
 }
 
 export interface LoggerLike {
