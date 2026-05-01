@@ -2,6 +2,55 @@ import type { Browser, BrowserContext, LaunchOptions } from "playwright";
 
 import type { ScrapperSettings } from "../types.js";
 
+export interface BrowserSingleton {
+  get(): Promise<Browser>;
+  close(): Promise<void>;
+}
+
+export interface BrowserSingletonHooks {
+  onDisconnected?: () => void;
+}
+
+export function createBrowserSingleton(
+  launch: () => Promise<Browser>,
+  hooks: BrowserSingletonHooks = {}
+): BrowserSingleton {
+  let browser: Browser | null = null;
+  let pending: Promise<Browser> | null = null;
+
+  return {
+    async get(): Promise<Browser> {
+      if (browser && browser.isConnected()) {
+        return browser;
+      }
+      if (!pending) {
+        pending = (async () => {
+          const launched = await launch();
+          launched.once("disconnected", () => {
+            if (browser === launched) {
+              browser = null;
+              hooks.onDisconnected?.();
+            }
+          });
+          browser = launched;
+          return launched;
+        })().finally(() => {
+          pending = null;
+        });
+      }
+      return pending;
+    },
+    async close(): Promise<void> {
+      const current = browser;
+      browser = null;
+      pending = null;
+      if (current && current.isConnected()) {
+        await current.close();
+      }
+    }
+  };
+}
+
 const DEFAULT_VIEWPORT = { width: 1366, height: 768 } as const;
 const DEFAULT_ACCEPT_LANGUAGE = "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7";
 const DEFAULT_BROWSER_ARGS = [

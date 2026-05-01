@@ -1,7 +1,12 @@
 import type { SearchRunResult, SearchResultItem } from "@dr-stone/database";
-import type { Browser, BrowserContext, Page } from "playwright";
+import type { BrowserContext, Page } from "playwright";
 
-import { buildBrowserLaunchOptions, createStealthBrowserContext } from "../../browser/playwright.js";
+import {
+  buildBrowserLaunchOptions,
+  createBrowserSingleton,
+  createStealthBrowserContext,
+  type BrowserSingleton
+} from "../../browser/playwright.js";
 import { FetchError } from "../../errors.js";
 import type { LoggerLike, ScrapperSettings, SearchSource } from "../../types.js";
 import {
@@ -50,7 +55,7 @@ const MAX_ROUTE_ATTEMPTS = 3;
 export class PichauSource implements SearchSource {
   readonly sourceName = "pichau";
   readonly strategy = "browser" as const;
-  private browserPromise: Promise<Browser> | null = null;
+  private readonly browser: BrowserSingleton;
 
   constructor(
     private readonly settings: Pick<
@@ -58,17 +63,29 @@ export class PichauSource implements SearchSource {
       "proxyServer" | "proxyUsername" | "proxyPassword" | "userAgent"
     >,
     private readonly logger: LoggerLike
-  ) {}
+  ) {
+    this.browser = createBrowserSingleton(
+      async () => {
+        const { chromium } = await import("playwright");
+        return chromium.launch(buildBrowserLaunchOptions(this.settings));
+      },
+      {
+        onDisconnected: () => {
+          this.logger.warn(
+            { event: "browser_disconnected", source: this.sourceName },
+            "browser_disconnected"
+          );
+        }
+      }
+    );
+  }
 
   buildSearchUrl(searchTerm: string): string {
     return buildPichauSearchUrls(searchTerm)[0];
   }
 
   async search(searchTerm: string): Promise<SearchRunResult> {
-    const { chromium } = await import("playwright");
-    this.browserPromise ??= chromium.launch(buildBrowserLaunchOptions(this.settings));
-
-    const browser = await this.browserPromise;
+    const browser = await this.browser.get();
     const candidateSearchUrls = buildPichauSearchUrls(searchTerm);
     let bestDiagnostics: PichauPageDiagnostics | null = null;
     let lastRouteError: unknown = null;
@@ -205,13 +222,7 @@ export class PichauSource implements SearchSource {
   }
 
   async close(): Promise<void> {
-    if (!this.browserPromise) {
-      return;
-    }
-
-    const browser = await this.browserPromise;
-    await browser.close();
-    this.browserPromise = null;
+    await this.browser.close();
   }
 
   private async trySearchRoute(

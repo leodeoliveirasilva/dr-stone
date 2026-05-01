@@ -1,9 +1,14 @@
 import type { SearchRunResult, SearchResultItem } from "@dr-stone/database";
-import type { Browser, Page } from "playwright";
+import type { Page } from "playwright";
 
 import { FetchError } from "../../errors.js";
 import { normalizeAvailability, normalizeCurrency, normalizePrice } from "../../normalizers.js";
-import { buildBrowserLaunchOptions, createStealthBrowserContext } from "../../browser/playwright.js";
+import {
+  buildBrowserLaunchOptions,
+  createBrowserSingleton,
+  createStealthBrowserContext,
+  type BrowserSingleton
+} from "../../browser/playwright.js";
 import type { LoggerLike, ScrapperSettings, SearchSource } from "../../types.js";
 
 interface AmazonPageDiagnostics {
@@ -21,7 +26,7 @@ interface AmazonPageDiagnostics {
 export class AmazonSource implements SearchSource {
   readonly sourceName = "amazon";
   readonly strategy = "browser" as const;
-  private browserPromise: Promise<Browser> | null = null;
+  private readonly browser: BrowserSingleton;
 
   constructor(
     private readonly settings: Pick<
@@ -29,7 +34,22 @@ export class AmazonSource implements SearchSource {
       "proxyServer" | "proxyUsername" | "proxyPassword" | "userAgent"
     >,
     private readonly logger: LoggerLike
-  ) {}
+  ) {
+    this.browser = createBrowserSingleton(
+      async () => {
+        const { chromium } = await import("playwright");
+        return chromium.launch(buildBrowserLaunchOptions(this.settings));
+      },
+      {
+        onDisconnected: () => {
+          this.logger.warn(
+            { event: "browser_disconnected", source: this.sourceName },
+            "browser_disconnected"
+          );
+        }
+      }
+    );
+  }
 
   buildSearchUrl(searchTerm: string): string {
     const url = new URL("https://www.amazon.com.br/s");
@@ -38,9 +58,7 @@ export class AmazonSource implements SearchSource {
   }
 
   async search(searchTerm: string): Promise<SearchRunResult> {
-    const { chromium } = await import("playwright");
-    this.browserPromise ??= chromium.launch(buildBrowserLaunchOptions(this.settings));
-    const browser = await this.browserPromise;
+    const browser = await this.browser.get();
     const context = await createStealthBrowserContext(browser, this.settings);
     const searchUrl = this.buildSearchUrl(searchTerm);
     let page: Page | null = null;
@@ -183,13 +201,7 @@ export class AmazonSource implements SearchSource {
   }
 
   async close(): Promise<void> {
-    if (!this.browserPromise) {
-      return;
-    }
-
-    const browser = await this.browserPromise;
-    await browser.close();
-    this.browserPromise = null;
+    await this.browser.close();
   }
 
   private async extractItems(page: Page): Promise<SearchResultItem[]> {
